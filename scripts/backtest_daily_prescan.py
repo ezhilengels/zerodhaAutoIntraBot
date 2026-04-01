@@ -59,6 +59,8 @@ def parse_args() -> argparse.Namespace:
             "pivot_breakout",
             "pivot_breakout_v2",
             "ema_crossover",
+            "short_intraday_v1",
+            "ath_reversal_v5",
             "multi",
         ],
         help="Strategy to replay on the daily shortlist.",

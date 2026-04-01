@@ -27,11 +27,13 @@ if PROJECT_ROOT not in sys.path:
 from core.session import SessionState
 from core.signal import Signal
 from strategy import ema_crossover, orb, pivot_breakout, pullback, vwap_reclaim, vwap_rsi
+from strategy.v1 import short_intraday as short_intraday_v1
 from strategy.v2 import pivot_breakout as pivot_breakout_v2
 from strategy.v2 import vwap_reclaim as vwap_reclaim_v2
 from strategy.v2 import vwap_rsi as vwap_rsi_v2
 from strategy.v3 import vwap_rsi as vwap_rsi_v3
 from strategy.v4 import vwap_rsi_bot as vwap_rsi_v4
+from strategy.v5 import ath_reversal_bot as ath_reversal_v5
 
 
 StrategyModule = object
@@ -70,6 +72,8 @@ STRATEGY_MODULES: Dict[str, StrategyModule] = {
     "pivot_breakout": pivot_breakout,
     "pivot_breakout_v2": pivot_breakout_v2,
     "ema_crossover": ema_crossover,
+    "short_intraday_v1": short_intraday_v1,
+    "ath_reversal_v5": ath_reversal_v5,
 }
 
 
@@ -79,7 +83,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="multi",
-        choices=["pullback", "orb", "vwap_reclaim", "vwap_reclaim_v2", "vwap_rsi", "vwap_rsi_v2", "vwap_rsi_v3", "vwap_rsi_v4", "pivot_breakout", "pivot_breakout_v2", "ema_crossover", "multi"],
+        choices=["pullback", "orb", "vwap_reclaim", "vwap_reclaim_v2", "vwap_rsi", "vwap_rsi_v2", "vwap_rsi_v3", "vwap_rsi_v4", "pivot_breakout", "pivot_breakout_v2", "ema_crossover", "short_intraday_v1", "ath_reversal_v5", "multi"],
         help="Strategy mode to replay.",
     )
     parser.add_argument(
@@ -213,6 +217,7 @@ def detect_signal(strategy_name: str, symbol: str, state: SessionState, quote: d
 
 
 def exit_trade(signal: Signal, future_df: pd.DataFrame) -> Tuple[str, pd.Timestamp, float]:
+    direction   = getattr(signal, "direction", "LONG")
     sl          = signal.stop_loss
     be_trigger  = getattr(signal, "be_stop_trigger", 0.0)
     be_active   = False
@@ -221,21 +226,24 @@ def exit_trade(signal: Signal, future_df: pd.DataFrame) -> Tuple[str, pd.Timesta
         low  = float(row["low"])
         high = float(row["high"])
 
-        # Slide stop to breakeven once price reaches the BE trigger level.
-        # Skip SL/TP check on this same candle — momentum candles routinely
-        # tap a new high and pull back to entry intra-candle. Checking the
-        # stop on the same candle would cause instant BE exits on normal
-        # mid-trade breathing, which is the behaviour we want to avoid.
-        if be_trigger and not be_active and high >= be_trigger:
-            sl        = signal.entry
-            be_active = True
-            continue   # ← evaluate new stop from the NEXT candle onward
+        if direction == "SHORT":
+            # SHORT: SL is ABOVE entry, TP is BELOW entry
+            if high >= sl:
+                return "SL", pd.Timestamp(row["time"]), float(sl)
+            if low <= signal.target:
+                return "TARGET", pd.Timestamp(row["time"]), float(signal.target)
+        else:
+            # LONG: BE slide logic + standard SL/TP
+            if be_trigger and not be_active and high >= be_trigger:
+                sl        = signal.entry
+                be_active = True
+                continue   # evaluate new stop from the NEXT candle onward
 
-        if low <= sl:
-            outcome = "BE" if be_active else "SL"
-            return outcome, pd.Timestamp(row["time"]), float(sl)
-        if high >= signal.target:
-            return "TARGET", pd.Timestamp(row["time"]), float(signal.target)
+            if low <= sl:
+                outcome = "BE" if be_active else "SL"
+                return outcome, pd.Timestamp(row["time"]), float(sl)
+            if high >= signal.target:
+                return "TARGET", pd.Timestamp(row["time"]), float(signal.target)
 
     last = future_df.iloc[-1]
     return "EOD", pd.Timestamp(last["time"]), float(last["close"])
@@ -295,11 +303,17 @@ def replay_symbol_day(symbol: str, day_df: pd.DataFrame, strategy_name: str, sym
 
         outcome, exit_time, exit_price = exit_trade(signal, future_df)
         entry_time = pd.Timestamp(partial_df.iloc[-1]["time"])
-        pnl = round(exit_price - signal.entry, 2)
+        direction  = getattr(signal, "direction", "LONG")
+        # PnL is positive when trade moves in intended direction
+        if direction == "SHORT":
+            pnl  = round(signal.entry - exit_price, 2)   # profit when price falls
+            risk = signal.stop_loss - signal.entry        # SL is above entry
+        else:
+            pnl  = round(exit_price - signal.entry, 2)   # profit when price rises
+            risk = signal.entry - signal.stop_loss        # SL is below entry
         gross_pnl_rupees = round(pnl * signal.quantity, 2)
         charges_rupees = estimate_zerodha_intraday_equity_charges(signal.entry, exit_price, signal.quantity)
         net_pnl_rupees = round(gross_pnl_rupees - charges_rupees, 2)
-        risk = signal.entry - signal.stop_loss
         rr = round(pnl / risk, 2) if risk > 0 else 0.0
 
         return ReplayTrade(

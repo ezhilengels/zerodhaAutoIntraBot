@@ -34,6 +34,10 @@ class Signal:
     # 0.0 means BE is disabled for this signal.
     be_stop_trigger: float = 0.0
 
+    # Trade direction — "LONG" (default) or "SHORT".
+    # All v1–v4 strategies are LONG; v5 ATH Reversal is SHORT.
+    direction: str = "LONG"
+
     def to_dict(self) -> dict:
         return asdict(self)
 
