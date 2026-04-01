@@ -150,50 +150,58 @@ def create_kite_session() -> Optional[KiteConnect]:
 
 def place_orders(kite: Optional[KiteConnect], signal: Signal) -> Tuple[Optional[str], Optional[str]]:
     """
-    Place a MIS MARKET BUY + SL-M SELL for the given signal.
-    Returns (buy_order_id, sl_order_id) or (None, None) on failure.
+    Place a MIS entry + protective SL order for the given signal.
+    Returns (entry_order_id, sl_order_id) or (None, None) on failure.
     """
     symbol = signal.symbol
     qty    = signal.quantity
+    direction = getattr(signal, "direction", "LONG")
     entry_price = _round_to_tick(signal.entry)
     sl_trigger  = _round_to_tick(signal.stop_loss)
-    sl_price    = _round_to_tick(max(sl_trigger - _TICK_SIZE, _TICK_SIZE))
+    if direction == "SHORT":
+        sl_price = _ceil_to_tick(sl_trigger + _TICK_SIZE)
+        entry_txn = kite.TRANSACTION_TYPE_SELL if kite else "SELL"
+        sl_txn = kite.TRANSACTION_TYPE_BUY if kite else "BUY"
+    else:
+        sl_price = _round_to_tick(max(sl_trigger - _TICK_SIZE, _TICK_SIZE))
+        entry_txn = kite.TRANSACTION_TYPE_BUY if kite else "BUY"
+        sl_txn = kite.TRANSACTION_TYPE_SELL if kite else "SELL"
 
-    buy_id: Optional[str] = None
+    entry_id: Optional[str] = None
     sl_id: Optional[str] = None
 
     if execution_cfg.paper_trading:
-        buy_id = f"PAPER-BUY-{uuid.uuid4().hex[:8].upper()}"
+        entry_id = f"PAPER-ENTRY-{uuid.uuid4().hex[:8].upper()}"
         sl_id = f"PAPER-SL-{uuid.uuid4().hex[:8].upper()}"
-        log.info(f"🧪 PAPER BUY simulated | {symbol} ×{qty} | ID: {buy_id}")
-        log.info(f"🧪 PAPER SL simulated  | {symbol} trigger=₹{sl_trigger} limit=₹{sl_price} | ID: {sl_id}")
-        _append_trade_log(signal, buy_id, sl_id)
-        return buy_id, sl_id
+        log.info(f"🧪 PAPER {direction} entry simulated | {symbol} ×{qty} | ID: {entry_id}")
+        log.info(f"🧪 PAPER SL simulated | {symbol} trigger=₹{sl_trigger} limit=₹{sl_price} | ID: {sl_id}")
+        _append_trade_log(signal, entry_id, sl_id)
+        return entry_id, sl_id
 
     try:
-        buy_id = kite.place_order(
+        entry_id = kite.place_order(
             variety          = kite.VARIETY_REGULAR,
             exchange         = kite.EXCHANGE_NSE,
             tradingsymbol    = symbol,
-            transaction_type = kite.TRANSACTION_TYPE_BUY,
+            transaction_type = entry_txn,
             quantity         = qty,
             order_type       = kite.ORDER_TYPE_LIMIT,
             price            = entry_price,
             product          = _order_product(kite),
         )
-        log.info(f"🛒 BUY placed  | {symbol} ×{qty} @ ₹{entry_price} | ID: {buy_id}")
+        log.info(f"🛒 {direction} entry placed | {symbol} ×{qty} @ ₹{entry_price} | ID: {entry_id}")
 
-        filled_qty, buy_details = _wait_for_fill(kite, buy_id)
+        filled_qty, entry_details = _wait_for_fill(kite, entry_id)
         if filled_qty <= 0:
-            status = (buy_details or {}).get("status", "UNKNOWN")
-            log.warning(f"⚠️ BUY not filled for {symbol} yet (status={status}); skipping SL placement for now.")
-            return buy_id, None
+            status = (entry_details or {}).get("status", "UNKNOWN")
+            log.warning(f"⚠️ Entry not filled for {symbol} yet (status={status}); skipping SL placement for now.")
+            return entry_id, None
 
         sl_id = kite.place_order(
             variety          = kite.VARIETY_REGULAR,
             exchange         = kite.EXCHANGE_NSE,
             tradingsymbol    = symbol,
-            transaction_type = kite.TRANSACTION_TYPE_SELL,
+            transaction_type = sl_txn,
             quantity         = filled_qty,
             order_type       = kite.ORDER_TYPE_SL,
             trigger_price    = sl_trigger,
@@ -204,40 +212,46 @@ def place_orders(kite: Optional[KiteConnect], signal: Signal) -> Tuple[Optional[
             f"🛡  SL placed   | {symbol} ×{filled_qty} trigger=₹{sl_trigger} limit=₹{sl_price} | ID: {sl_id}"
         )
 
-        _append_trade_log(signal, buy_id, sl_id)
-        return buy_id, sl_id
+        _append_trade_log(signal, entry_id, sl_id)
+        return entry_id, sl_id
 
     except Exception as exc:
         log.error(f"❌ Order failed for {symbol}: {exc}")
-        if buy_id and not sl_id:
+        if entry_id and not sl_id:
             try:
-                filled_qty, _buy_details = _wait_for_fill(kite, buy_id, timeout_secs=1)
+                filled_qty, _entry_details = _wait_for_fill(kite, entry_id, timeout_secs=1)
                 if filled_qty <= 0:
                     return None, None
+                if direction == "SHORT":
+                    emergency_txn = kite.TRANSACTION_TYPE_BUY
+                    emergency_price = _ceil_to_tick(min(signal.stop_loss, signal.entry * 1.01))
+                else:
+                    emergency_txn = kite.TRANSACTION_TYPE_SELL
+                    emergency_price = _round_to_tick(max(signal.stop_loss, signal.entry * 0.99))
                 exit_id = kite.place_order(
                     variety          = kite.VARIETY_REGULAR,
                     exchange         = kite.EXCHANGE_NSE,
                     tradingsymbol    = symbol,
-                    transaction_type = kite.TRANSACTION_TYPE_SELL,
+                    transaction_type = emergency_txn,
                     quantity         = filled_qty,
                     order_type       = kite.ORDER_TYPE_LIMIT,
-                    price            = _round_to_tick(max(signal.stop_loss, signal.entry * 0.99)),
+                    price            = emergency_price,
                     product          = _order_product(kite),
                 )
                 log.warning(
-                    f"⚠️ SL placement failed after BUY fill for {symbol}; "
+                    f"⚠️ SL placement failed after entry fill for {symbol}; "
                     f"sent emergency limit exit | Exit ID: {exit_id}"
                 )
             except Exception as exit_exc:
                 log.critical(
-                    f"🚨 BUY succeeded but SL and emergency exit both failed for {symbol}: {exit_exc}"
+                    f"🚨 Entry succeeded but SL and emergency exit both failed for {symbol}: {exit_exc}"
                 )
         return None, None
 
 
 def square_off_live_mis_positions(kite: Optional[KiteConnect], state) -> list[str]:
     """
-    Close bot-tracked MIS long positions before broker auto square-off.
+    Close bot-tracked MIS positions before broker auto square-off.
     Returns the list of symbols successfully sent for exit.
     """
     if execution_cfg.paper_trading or execution_cfg.order_product != "MIS" or not kite:
@@ -255,12 +269,11 @@ def square_off_live_mis_positions(kite: Optional[KiteConnect], state) -> list[st
             if (
                 order.get("tradingsymbol") in live_symbols and
                 order.get("product") == kite.PRODUCT_MIS and
-                order.get("transaction_type") == kite.TRANSACTION_TYPE_SELL and
                 order.get("status") in {"OPEN", "TRIGGER PENDING", "AMO REQ RECEIVED", "MODIFY VALIDATION PENDING"}
             ):
                 try:
                     kite.cancel_order(variety=order["variety"], order_id=order["order_id"])
-                    log.info(f"🧹 Cancelled pending MIS sell order for {order['tradingsymbol']} | ID: {order['order_id']}")
+                    log.info(f"🧹 Cancelled pending MIS order for {order['tradingsymbol']} | ID: {order['order_id']}")
                 except Exception as exc:
                     log.warning(f"⚠️ Could not cancel pending order {order.get('order_id')} for {order.get('tradingsymbol')}: {exc}")
 
@@ -268,22 +281,28 @@ def square_off_live_mis_positions(kite: Optional[KiteConnect], state) -> list[st
         for position in positions:
             symbol = position.get("tradingsymbol")
             qty = int(position.get("quantity", 0))
-            if symbol not in live_symbols or qty <= 0 or position.get("product") != kite.PRODUCT_MIS:
+            if symbol not in live_symbols or qty == 0 or position.get("product") != kite.PRODUCT_MIS:
                 continue
 
             ltp = float(position.get("last_price") or position.get("average_price") or state.live_signals[symbol].entry)
-            exit_price = _round_to_tick(max(ltp * 0.995, _TICK_SIZE))
+            exit_qty = abs(qty)
+            if qty > 0:
+                exit_txn = kite.TRANSACTION_TYPE_SELL
+                exit_price = _round_to_tick(max(ltp * 0.995, _TICK_SIZE))
+            else:
+                exit_txn = kite.TRANSACTION_TYPE_BUY
+                exit_price = _ceil_to_tick(max(ltp * 1.005, _TICK_SIZE))
             exit_id = kite.place_order(
                 variety=kite.VARIETY_REGULAR,
                 exchange=kite.EXCHANGE_NSE,
                 tradingsymbol=symbol,
-                transaction_type=kite.TRANSACTION_TYPE_SELL,
-                quantity=qty,
+                transaction_type=exit_txn,
+                quantity=exit_qty,
                 order_type=kite.ORDER_TYPE_LIMIT,
                 price=exit_price,
                 product=kite.PRODUCT_MIS,
             )
-            log.warning(f"⏰ MIS square-off sent for {symbol} ×{qty} @ ₹{exit_price} | Exit ID: {exit_id}")
+            log.warning(f"⏰ MIS square-off sent for {symbol} ×{exit_qty} @ ₹{exit_price} | Exit ID: {exit_id}")
             state.close_live_trade(symbol)
             exited.append(symbol)
     except Exception as exc:

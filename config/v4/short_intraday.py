@@ -13,6 +13,7 @@ class ShortIntradayV4Config:
     timeframe: str = os.getenv("SHORT_INTRADAY_V4_TIMEFRAME", "5min").strip()
     rsi_period: int = int(os.getenv("SHORT_INTRADAY_V4_RSI_PERIOD", "14"))
     ema_period: int = int(os.getenv("SHORT_INTRADAY_V4_EMA_PERIOD", "20"))
+    price_swing_lookback: int = int(os.getenv("SHORT_INTRADAY_V4_PRICE_SWING_LOOKBACK", "20"))
     volume_lookback: int = int(os.getenv("SHORT_INTRADAY_V4_VOLUME_LOOKBACK", "20"))
 
     session_start: str = os.getenv("SHORT_INTRADAY_V4_SESSION_START", "10:00").strip()
@@ -27,6 +28,10 @@ class ShortIntradayV4Config:
     stop_buffer_pct: float = float(os.getenv("SHORT_INTRADAY_V4_STOP_BUFFER_PCT", "0.005"))
     min_avg_turnover_rs: float = float(os.getenv("SHORT_INTRADAY_V4_MIN_AVG_TURNOVER_RS", "10000000"))
     market_filter_enabled: bool = os.getenv("SHORT_INTRADAY_V4_MARKET_FILTER_ENABLED", "true").strip().lower() == "true"
+    ath_check_enabled: bool = os.getenv("SHORT_INTRADAY_V4_ATH_CHECK_ENABLED", "false").strip().lower() == "true"
+    ath_proximity_pct: float = float(os.getenv("SHORT_INTRADAY_V4_ATH_PROXIMITY_PCT", "0.03"))
+    target_rr_mult: float = float(os.getenv("SHORT_INTRADAY_V4_TARGET_RR_MULT", "1.5"))
+    min_target_buffer_pct: float = float(os.getenv("SHORT_INTRADAY_V4_MIN_TARGET_BUFFER_PCT", "0.002"))
 
     blocklist: set = None
 

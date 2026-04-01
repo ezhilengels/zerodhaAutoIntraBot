@@ -90,13 +90,14 @@ def send_signal_alert(
     session_state.add_pending(callback_key, signal)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    action_label = "✅ Sell" if getattr(signal, "direction", "LONG") == "SHORT" else "✅ Buy"
     payload = {
         "chat_id":    TELEGRAM_CHAT_ID,
         "text":       _fmt_signal(signal, title=title),
         "parse_mode": "Markdown",
         "reply_markup": {
             "inline_keyboard": [[
-                {"text": "✅ Place Order", "callback_data": f"confirm_{callback_key}"},
+                {"text": action_label, "callback_data": f"confirm_{callback_key}"},
                 {"text": "❌ Skip",        "callback_data": f"skip_{callback_key}"},
             ]]
         },
@@ -116,6 +117,7 @@ def send_signal_alert(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _fmt_signal(s: Signal, title: str = "PULLBACK SIGNAL DETECTED") -> str:
+    side = getattr(s, "direction", "LONG")
     mode_label = f"⚙️  Mode       : {mode_name()}\n"
     strategy_line = (
         f"🧠  Strategy   : {', '.join(s.strategy_names)}\n"
@@ -127,6 +129,7 @@ def _fmt_signal(s: Signal, title: str = "PULLBACK SIGNAL DETECTED") -> str:
         f"{mode_label}"
         f"{strategy_line}"
         f"🏷  Stock      : `{s.symbol}`\n"
+        f"↕️  Side       : {side}\n"
         f"💰  Entry      : ₹{s.entry}\n"
         f"🛡  Stop Loss  : ₹{s.stop_loss}\n"
         f"🎯  Target     : ₹{s.target}\n"
@@ -145,6 +148,7 @@ def _fmt_signal(s: Signal, title: str = "PULLBACK SIGNAL DETECTED") -> str:
 def _fmt_order_placed(s: Signal, buy_id: str, sl_id: str, trade_count: int) -> str:
     title = "🧪 *PAPER ORDER PLACED*" if execution_cfg.paper_trading else "✅ *ORDER PLACED*"
     mode_line = f"⚙️  Mode      : {mode_name()}\n"
+    side_line = f"↕️  Side      : {getattr(s, 'direction', 'LONG')}\n"
     strategy_line = (
         f"🧠  Strategy  : {', '.join(s.strategy_names)}\n"
         if s.strategy_names else ""
@@ -153,13 +157,14 @@ def _fmt_order_placed(s: Signal, buy_id: str, sl_id: str, trade_count: int) -> s
         f"{title}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{mode_line}"
+        f"{side_line}"
         f"{strategy_line}"
         f"🏷  Stock     : `{s.symbol}`\n"
         f"💰  Entry     : ₹{s.entry}\n"
         f"🛡  Stop Loss : ₹{s.stop_loss}\n"
         f"🎯  Target    : ₹{s.target}\n"
         f"📦  Qty       : {s.quantity}\n"
-        f"🆔  Buy ID    : `{buy_id}`\n"
+        f"🆔  Entry ID  : `{buy_id}`\n"
         f"🆔  SL ID     : `{sl_id}`\n"
         f"📊  Trades    : {trade_count}/{scanner_cfg.max_trades_per_day}"
     )
@@ -388,11 +393,12 @@ async def _button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
+        side = getattr(signal, "direction", "LONG")
         await query.edit_message_text(
             (
-                f"⏳ Simulating order for *{signal.symbol}*..."
+                f"⏳ Simulating {side} order for *{signal.symbol}*..."
                 if execution_cfg.paper_trading
-                else f"⏳ Placing order for *{signal.symbol}*..."
+                else f"⏳ Placing {side} order for *{signal.symbol}*..."
             ),
             parse_mode="Markdown"
         )
