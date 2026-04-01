@@ -75,12 +75,40 @@ def _check_short_signal(df: pd.DataFrame) -> dict:
     }
 
 
+def _check_market_trend() -> bool:
+    """
+    Return True only when the broader market is weak enough to support shorts.
+    If market data is unavailable, fail open so replay/live scanning does not break.
+    """
+    if not short_intraday_v2_cfg.market_filter_enabled:
+        return True
+
+    nifty_df = nse.get_index_candles(short_intraday_v2_cfg.market_symbol)
+    nifty_df = completed_candles(nifty_df)
+    if nifty_df.empty or len(nifty_df) < max(short_intraday_v2_cfg.rsi_period, short_intraday_v2_cfg.ema_period) + 2:
+        return True
+
+    nifty_df = nifty_df.copy()
+    nifty_df["rsi"] = _calculate_rsi(nifty_df, short_intraday_v2_cfg.rsi_period)
+    nifty_df["ema_20"] = nifty_df["close"].ewm(span=short_intraday_v2_cfg.ema_period, adjust=False).mean()
+
+    current = nifty_df.iloc[-1]
+    previous = nifty_df.iloc[-2]
+
+    below_ema = bool(current["close"] < current["ema_20"]) if pd.notna(current["ema_20"]) else False
+    rsi_cooling = bool(pd.notna(current["rsi"]) and pd.notna(previous["rsi"]) and current["rsi"] < previous["rsi"])
+    return below_ema or rsi_cooling
+
+
 def detect(symbol: str, state: SessionState) -> Optional[Signal]:
     now = current_hhmm()
     if now < short_intraday_v2_cfg.session_start or now > short_intraday_v2_cfg.session_end:
         return None
 
     if symbol.upper() in short_intraday_v2_cfg.blocklist:
+        return None
+
+    if not _check_market_trend():
         return None
 
     df = nse.get_candles(symbol)
