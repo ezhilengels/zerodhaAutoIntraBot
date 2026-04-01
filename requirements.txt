@@ -1,0 +1,7 @@
+kiteconnect>=4.2.0
+python-telegram-bot>=20.0
+requests>=2.31.0
+pandas>=2.0.0
+numpy>=1.26.0
+python-dotenv>=1.0.0
+yfinance>=0.2.54

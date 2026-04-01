@@ -1,0 +1,13 @@
+# Credentials — never commit these
+.env
+.kite_access_token.json
+
+# Logs and trade data
+logs/
+trades/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
