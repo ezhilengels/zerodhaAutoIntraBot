@@ -47,6 +47,7 @@ def _cfg_dict() -> dict:
         "risk_pct": vwap_rsi_v4_cfg.risk_pct,
         "enable_shorts": vwap_rsi_v4_cfg.enable_shorts,
         "vwap_max_dist_pct": vwap_rsi_v4_cfg.vwap_max_dist_pct,
+        "atr_be_mult": vwap_rsi_v4_cfg.atr_be_mult,
         "blocklist": vwap_rsi_v4_cfg.blocklist,
     }
 
@@ -381,12 +382,16 @@ def generate_signals(df: pd.DataFrame, cfg: dict, symbol: str = "") -> pd.DataFr
 #  BACKTESTER  (candle-close simulation)
 # ─────────────────────────────────────────────
 
-def backtest(df: pd.DataFrame) -> pd.DataFrame:
+def backtest(df: pd.DataFrame, cfg: dict = None) -> pd.DataFrame:
     """
     Simple next-candle-open fill simulation.
     Each signal is taken on next candle open; exits at SL/TP or EOD.
+    Supports breakeven stop: once price moves atr_be_mult ATRs in favour,
+    the stop slides to entry price to protect against reversals.
     Returns a trades DataFrame.
     """
+    be_mult = (cfg or {}).get("atr_be_mult", 0.0)  # 0 = disabled
+
     trades = []
     signal_rows = df[df["signal"] != 0].copy()
 
@@ -399,19 +404,29 @@ def backtest(df: pd.DataFrame) -> pd.DataFrame:
         direction   = row["signal"]
         sl, tp      = row["sl"], row["tp"]
         qty         = row["qty"]
+        atr         = row["atr"]
         entry_time  = df.index[loc + 1]
 
-        pnl    = None
-        reason = "EOD"
+        pnl        = None
+        reason     = "EOD"
+        be_active  = False                         # has breakeven been triggered?
+        be_trigger = be_mult * atr if be_mult > 0 else None
 
         # walk forward to find SL/TP hit
         for j in range(loc + 1, len(df)):
             c = df.iloc[j]
             if direction == 1:   # LONG
-                if c["low"]  <= sl:  pnl = (sl - fill_price) * qty; reason = "SL"; break
+                # slide stop to breakeven once price runs be_mult ATRs in favour
+                if be_trigger and not be_active and c["high"] >= fill_price + be_trigger:
+                    sl = fill_price
+                    be_active = True
+                if c["low"]  <= sl:  pnl = (sl - fill_price) * qty; reason = "BE" if be_active else "SL"; break
                 if c["high"] >= tp:  pnl = (tp - fill_price) * qty; reason = "TP"; break
             else:                # SHORT
-                if c["high"] >= sl:  pnl = (fill_price - sl) * qty; reason = "SL"; break
+                if be_trigger and not be_active and c["low"] <= fill_price - be_trigger:
+                    sl = fill_price
+                    be_active = True
+                if c["high"] >= sl:  pnl = (fill_price - sl) * qty; reason = "BE" if be_active else "SL"; break
                 if c["low"]  <= tp:  pnl = (fill_price - tp) * qty; reason = "TP"; break
 
         if pnl is None:
@@ -464,6 +479,7 @@ def performance_report(trades: pd.DataFrame, cfg: dict):
     print(f"  Max Drawdown    : ₹{max_dd:,.2f}")
     print(f"  TP Exits        : {(trades['exit_reason']=='TP').sum()}")
     print(f"  SL Exits        : {(trades['exit_reason']=='SL').sum()}")
+    print(f"  BE Exits        : {(trades['exit_reason']=='BE').sum()}")
     print(f"  EOD Exits       : {(trades['exit_reason']=='EOD').sum()}")
     print("═"*55)
     print(trades[["entry_time","direction","score","fill","sl","tp","qty","pnl","exit_reason"]].to_string(index=False))
@@ -489,6 +505,8 @@ class VWAPRSIBot:
         self.entry_price   = None
         self.sl            = None
         self.tp            = None
+        self.be_active     = False   # has breakeven stop been triggered?
+        self.be_trigger    = None    # absolute price level that activates BE
 
     def on_candle(self, timestamp, open_, high, low, close, volume):
         """Call this on every new completed candle."""
@@ -511,10 +529,19 @@ class VWAPRSIBot:
         # ── Exit check if in trade ──
         if self.in_trade:
             if self.position_side == "LONG":
-                if low  <= self.sl: self._exit("SL hit", close); return
+                # slide stop to breakeven once price reaches the trigger level
+                if self.be_trigger and not self.be_active and high >= self.be_trigger:
+                    self.sl        = self.entry_price
+                    self.be_active = True
+                    print(f"   [BE] Stop moved to breakeven @ {self.sl:.2f}")
+                if low  <= self.sl: self._exit("BE hit" if self.be_active else "SL hit", close); return
                 if high >= self.tp: self._exit("TP hit", close); return
             elif self.position_side == "SHORT":
-                if high >= self.sl: self._exit("SL hit", close); return
+                if self.be_trigger and not self.be_active and low <= self.be_trigger:
+                    self.sl        = self.entry_price
+                    self.be_active = True
+                    print(f"   [BE] Stop moved to breakeven @ {self.sl:.2f}")
+                if high >= self.sl: self._exit("BE hit" if self.be_active else "SL hit", close); return
                 if low  <= self.tp: self._exit("TP hit", close); return
             return  # already in trade, skip new signal scan
 
@@ -541,6 +568,8 @@ class VWAPRSIBot:
                 self._enter("SHORT", close, sl, tp, qty, s)
 
     def _enter(self, side, price, sl, tp, qty, score):
+        be_mult = self.cfg.get("atr_be_mult", 0.0)
+        atr     = abs(price - sl) / self.cfg["atr_sl_mult"]  # back-calculate ATR from SL
         print(f"\n🟢 SIGNAL  [{side}]  Score:{score}/5")
         print(f"   Entry={price:.2f}  SL={sl:.2f}  TP={tp:.2f}  Qty={qty}")
         self.in_trade      = True
@@ -548,6 +577,12 @@ class VWAPRSIBot:
         self.entry_price   = price
         self.sl            = sl
         self.tp            = tp
+        self.be_active     = False
+        # set absolute price level that activates BE (e.g. entry + 1.0 * ATR for LONG)
+        if be_mult > 0:
+            self.be_trigger = price + be_mult * atr if side == "LONG" else price - be_mult * atr
+        else:
+            self.be_trigger = None
         self.place_order(side, "ENTER", price, qty)
 
     def _exit(self, reason, price):
@@ -555,6 +590,8 @@ class VWAPRSIBot:
         self.place_order(self.position_side, "EXIT", price, 0)
         self.in_trade      = False
         self.position_side = None
+        self.be_active     = False
+        self.be_trigger    = None
 
     def place_order(self, side, action, price, qty):
         """
