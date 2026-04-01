@@ -29,9 +29,12 @@ class VWAPRsiV4Config:
     capital: int = int(os.getenv("VWAP_RSI_V4_CAPITAL", "100000"))
     risk_pct: float = float(os.getenv("VWAP_RSI_V4_RISK_PCT", "0.01"))
     enable_shorts: bool = os.getenv("VWAP_RSI_V4_ENABLE_SHORTS", "false").strip().lower() == "true"
-    # After price moves this many ATRs in our favour, slide SL to breakeven
-    # Prevents unconverted winners from becoming losses / EOD drift-backs
-    atr_be_mult: float = float(os.getenv("VWAP_RSI_V4_ATR_BE_MULT", "1.0"))
+    # After price moves this many ATRs in our favour, slide SL to breakeven.
+    # Prevents unconverted winners from becoming losses / EOD drift-backs.
+    # 1.0 fires too early — momentum candles routinely retrace 1 ATR mid-trade.
+    # 1.5 = 60% of the way to TP (2.5x), a more sensible protection level.
+    # Set to 0.0 to disable BE entirely.
+    atr_be_mult: float = float(os.getenv("VWAP_RSI_V4_ATR_BE_MULT", "1.5"))
     # Hard gate: max % price can be above VWAP to still enter (avoids chasing)
     # 0.005 = 0.5% was too tight and blocked early-trend gap-up names like EICHERMOT
     # 0.010 = 1.0% gives breathing room while still rejecting extended entries

@@ -154,7 +154,7 @@ def main() -> None:
         print("No trades triggered.")
         return
 
-    per_symbol: Dict[str, Dict[str, float]] = defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "eod": 0, "pnl": 0.0})
+    per_symbol: Dict[str, Dict[str, float]] = defaultdict(lambda: {"trades": 0, "wins": 0, "losses": 0, "be": 0, "eod": 0, "pnl": 0.0})
     for trade in all_trades:
         row = per_symbol[trade.symbol]
         row["trades"] += 1
@@ -162,6 +162,8 @@ def main() -> None:
             row["wins"] += 1
         elif trade.outcome == "SL":
             row["losses"] += 1
+        elif trade.outcome == "BE":
+            row["be"] += 1
         else:
             row["eod"] += 1
         row["pnl"] += trade.pnl_per_share
@@ -176,10 +178,11 @@ def main() -> None:
         )
 
     total_trades = len(all_trades)
-    total_wins = sum(1 for t in all_trades if t.outcome == "TARGET")
+    total_wins   = sum(1 for t in all_trades if t.outcome == "TARGET")
     total_losses = sum(1 for t in all_trades if t.outcome == "SL")
-    total_eod = sum(1 for t in all_trades if t.outcome == "EOD")
-    total_pnl = round(sum(t.pnl_per_share for t in all_trades), 2)
+    total_be     = sum(1 for t in all_trades if t.outcome == "BE")
+    total_eod    = sum(1 for t in all_trades if t.outcome == "EOD")
+    total_pnl    = round(sum(t.pnl_per_share for t in all_trades), 2)
 
     print("\nSummary")
     print(f"strategy: {args.strategy}")
@@ -187,6 +190,7 @@ def main() -> None:
     print(f"trades: {total_trades}")
     print(f"wins: {total_wins}")
     print(f"losses: {total_losses}")
+    print(f"be exits: {total_be}")
     print(f"eod exits: {total_eod}")
     print(f"total pnl: {total_pnl:+.2f}")
 

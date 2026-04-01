@@ -30,6 +30,10 @@ class Signal:
     vol_ratio: float = 0.0
     strategy_names: List[str] = field(default_factory=list)
 
+    # Breakeven stop: absolute price at which the stop slides to entry.
+    # 0.0 means BE is disabled for this signal.
+    be_stop_trigger: float = 0.0
+
     def to_dict(self) -> dict:
         return asdict(self)
 

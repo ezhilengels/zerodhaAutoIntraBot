@@ -260,9 +260,17 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
     rsi_val = float(last["rsi"])
     vol_ratio = float(last["volume"] / last["avg_vol"]) if pd.notna(last["avg_vol"]) and float(last["avg_vol"]) > 0 else 0.0
 
+    # Compute absolute price level that triggers breakeven stop.
+    # be_trigger = entry + (atr_be_mult / atr_sl_mult) × risk_per_unit
+    # Using ratio keeps it consistent even if ATR itself isn't stored on Signal.
+    be_mult = cfg.get("atr_be_mult", 0.0)
+    risk_per_unit = entry - stop_loss
+    be_trigger = round(entry + (be_mult / cfg["atr_sl_mult"]) * risk_per_unit, 2) if be_mult > 0 else 0.0
+
     log.info(
         f"✅ VWAP+RSI v4 | {symbol} | entry=₹{entry}  sl=₹{stop_loss}  target=₹{target}  "
         f"qty={qty}  score={score}/5  vwap=₹{vwap_val:.2f}  rsi={rsi_val:.1f}  vol={vol_ratio:.2f}x"
+        + (f"  be=₹{be_trigger}" if be_trigger else "")
     )
 
     return Signal(
@@ -276,6 +284,7 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
         vwap=round(vwap_val, 2),
         rsi=round(rsi_val, 1),
         vol_ratio=round(vol_ratio, 2),
+        be_stop_trigger=be_trigger,
     )
 
 

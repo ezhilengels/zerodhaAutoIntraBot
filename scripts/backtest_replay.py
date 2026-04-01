@@ -213,11 +213,27 @@ def detect_signal(strategy_name: str, symbol: str, state: SessionState, quote: d
 
 
 def exit_trade(signal: Signal, future_df: pd.DataFrame) -> Tuple[str, pd.Timestamp, float]:
+    sl          = signal.stop_loss
+    be_trigger  = getattr(signal, "be_stop_trigger", 0.0)
+    be_active   = False
+
     for _, row in future_df.iterrows():
-        low = float(row["low"])
+        low  = float(row["low"])
         high = float(row["high"])
-        if low <= signal.stop_loss:
-            return "SL", pd.Timestamp(row["time"]), float(signal.stop_loss)
+
+        # Slide stop to breakeven once price reaches the BE trigger level.
+        # Skip SL/TP check on this same candle — momentum candles routinely
+        # tap a new high and pull back to entry intra-candle. Checking the
+        # stop on the same candle would cause instant BE exits on normal
+        # mid-trade breathing, which is the behaviour we want to avoid.
+        if be_trigger and not be_active and high >= be_trigger:
+            sl        = signal.entry
+            be_active = True
+            continue   # ← evaluate new stop from the NEXT candle onward
+
+        if low <= sl:
+            outcome = "BE" if be_active else "SL"
+            return outcome, pd.Timestamp(row["time"]), float(sl)
         if high >= signal.target:
             return "TARGET", pd.Timestamp(row["time"]), float(signal.target)
 
