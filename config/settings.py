@@ -85,6 +85,15 @@ PIVOT_BREAKOUT_V2_WATCHLIST: List[str] = [
     "RELIANCE",
 ]
 
+SHORT_INTRADAY_V3_ATH_CHECK_WATCHLIST: List[str] = [
+    "GRSE",
+    "INDIGO",
+    "MAZDOCK",
+    "TRENT",
+    "COCHINSHIP",
+    "OLAELEC",
+]
+
 NIFTY100_WATCHLIST: List[str] = [
     "ABB",
     "ADANIENSOL",
@@ -192,6 +201,8 @@ WATCHLIST_MODE: str = os.getenv("WATCHLIST_MODE", "custom").strip().lower()
 WATCHLIST: List[str]
 if WATCHLIST_MODE == "nifty100":
     WATCHLIST = NIFTY100_WATCHLIST
+elif WATCHLIST_MODE in {"short_intraday_v3_ath", "ath_short_v3", "athcheck"}:
+    WATCHLIST = SHORT_INTRADAY_V3_ATH_CHECK_WATCHLIST
 elif WATCHLIST_MODE in {"pivot_breakout_v2", "pivotv2", "pivot"}:
     WATCHLIST = PIVOT_BREAKOUT_V2_WATCHLIST
 else:
@@ -327,6 +338,10 @@ class PreScanConfig:
     shortlist_only: bool = os.getenv("PRE_SCAN_SHORTLIST_ONLY", "true").lower() == "true"
     shortlist_size: int = max(1, int(os.getenv("PRE_SCAN_SHORTLIST_SIZE", "15")))
     enable_news_check: bool = os.getenv("PRE_SCAN_ENABLE_NEWS_CHECK", "false").lower() == "true"
+    ath_scan_enabled: bool = os.getenv("PRE_SCAN_ATH_SCAN_ENABLED", "false").lower() == "true"
+    ath_near_pct: float = float(os.getenv("PRE_SCAN_ATH_NEAR_PCT", "3.0"))
+    ath_lookback_days: int = max(30, int(os.getenv("PRE_SCAN_ATH_LOOKBACK_DAYS", "252")))
+    ath_min_avg_turnover_rs: float = float(os.getenv("PRE_SCAN_ATH_MIN_AVG_TURNOVER_RS", "10000000"))
 
 
 STRATEGY_MODE: str = os.getenv("STRATEGY_MODE", "pullback").strip().lower()

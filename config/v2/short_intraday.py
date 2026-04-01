@@ -18,13 +18,16 @@ class ShortIntradayV2Config:
     session_start: str = os.getenv("SHORT_INTRADAY_V2_SESSION_START", "10:00").strip()
     session_end: str = os.getenv("SHORT_INTRADAY_V2_SESSION_END", "14:00").strip()
     market_symbol: str = os.getenv("SHORT_INTRADAY_V2_MARKET_SYMBOL", "NIFTY 50").strip()
+    max_ranked_signals: int = int(os.getenv("SHORT_INTRADAY_V2_MAX_RANKED_SIGNALS", "5"))
 
     rsi_overbought: float = float(os.getenv("SHORT_INTRADAY_V2_RSI_OVERBOUGHT", "75.0"))
     ema_dist_threshold: float = float(os.getenv("SHORT_INTRADAY_V2_EMA_DIST_PCT", "0.05"))
     volume_climax_mult: float = float(os.getenv("SHORT_INTRADAY_V2_VOL_CLIMAX_MULT", "2.0"))
     min_confirmations: int = int(os.getenv("SHORT_INTRADAY_V2_MIN_CONFIRMATIONS", "2"))
     stop_buffer_pct: float = float(os.getenv("SHORT_INTRADAY_V2_STOP_BUFFER_PCT", "0.005"))
+    min_avg_turnover_rs: float = float(os.getenv("SHORT_INTRADAY_V2_MIN_AVG_TURNOVER_RS", "10000000"))
     market_filter_enabled: bool = os.getenv("SHORT_INTRADAY_V2_MARKET_FILTER_ENABLED", "true").strip().lower() == "true"
+    sector_filter_enabled: bool = os.getenv("SHORT_INTRADAY_V2_SECTOR_FILTER_ENABLED", "true").strip().lower() == "true"
 
     blocklist: set = None
 

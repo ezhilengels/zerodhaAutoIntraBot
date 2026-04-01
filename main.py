@@ -15,6 +15,7 @@ from typing import Dict, Optional
 
 from utils.logger             import get_logger
 from config.settings          import WATCHLIST, scanner_cfg, execution_cfg, prescan_cfg, strategy_cfg, STRATEGY_MODE
+from config.v2.short_intraday import short_intraday_v2_cfg
 from core.signal              import Signal
 from core.prescan             import build_prescan_result
 from core.session             import SessionState
@@ -25,6 +26,7 @@ from strategy.v2             import pivot_breakout as pivot_breakout_v2
 from strategy.v2             import short_intraday as short_intraday_v2
 from strategy.v2             import vwap_reclaim as vwap_reclaim_v2
 from strategy.v2             import vwap_rsi as vwap_rsi_v2
+from strategy.v3             import short_intraday as short_intraday_v3
 from strategy.v3             import vwap_rsi as vwap_rsi_v3
 from strategy.v4             import vwap_rsi_bot as vwap_rsi_v4
 from broker                   import kite_broker
@@ -264,14 +266,39 @@ def _scan_once(state: SessionState) -> None:
     elif STRATEGY_MODE == "short_intraday_v2":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 short_intraday_v2 candidates: {len(candidates)} / {len(scan_symbols)}")
-
+        found: list[Signal] = []
         for symbol in candidates:
             signal = short_intraday_v2.detect(symbol, state)
             if signal:
-                signal.strategy_names = ["short_intraday_v2"]
-                results[symbol] = True
-                telegram.send_signal_alert(signal, state)
-                time.sleep(2)
+                found.append(signal)
+
+        ranked = sorted(found, key=lambda sig: getattr(sig, "ema_dist", 0.0), reverse=True)
+        for signal in ranked[: short_intraday_v2_cfg.max_ranked_signals]:
+            signal.strategy_names = ["short_intraday_v2"]
+            results[signal.symbol] = True
+            telegram.send_signal_alert(signal, state)
+            time.sleep(2)
+
+        if len(ranked) > short_intraday_v2_cfg.max_ranked_signals:
+            log.info(
+                f"✂️ short_intraday_v2 ranked {len(ranked)} signals, "
+                f"alerted top {short_intraday_v2_cfg.max_ranked_signals}"
+            )
+    elif STRATEGY_MODE == "short_intraday_v3":
+        candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
+        log.info(f"📌 short_intraday_v3 candidates: {len(candidates)} / {len(scan_symbols)}")
+        found: list[Signal] = []
+        for symbol in candidates:
+            signal = short_intraday_v3.detect(symbol, state)
+            if signal:
+                found.append(signal)
+
+        ranked = sorted(found, key=lambda sig: getattr(sig, "ema_dist", 0.0), reverse=True)
+        for signal in ranked[: short_intraday_v2_cfg.max_ranked_signals]:
+            signal.strategy_names = ["short_intraday_v3"]
+            results[signal.symbol] = True
+            telegram.send_signal_alert(signal, state)
+            time.sleep(2)
     else:
         shortlisted_quotes: dict[str, dict] = {}
 

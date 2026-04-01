@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from config.settings import WATCHLIST, prescan_cfg
+from config.settings import WATCHLIST, STRATEGY_MODE, prescan_cfg
 from data import nse_provider as nse
 from prescanV2.premarket_filter import (
     PremarketFilterConfig,
@@ -28,16 +28,23 @@ class PreScanResult:
 def _fmt_stock(stock: FilteredStock) -> str:
     news_tag = " news" if stock.is_news_day else ""
     beta_tag = stock.beta_category.lower()
-    return f"{stock.symbol} ({stock.gap_pct:+.2f}%, {beta_tag}{news_tag})"
+    ath_tag = f", ATH-{stock.ath_distance_pct:.2f}%" if stock.is_near_ath else ""
+    return f"{stock.symbol} ({stock.gap_pct:+.2f}%, {beta_tag}{ath_tag}{news_tag})"
 
 
 def build_prescan_result() -> PreScanResult:
+    ath_scan_enabled = prescan_cfg.ath_scan_enabled and STRATEGY_MODE == "short_intraday_v3"
+
     cfg = PremarketFilterConfig(
         gap_min_pct=prescan_cfg.gap_threshold_pct,
         allow_gap_down=False,
         enable_news_check=prescan_cfg.enable_news_check,
         skip_news_stocks=False,
         skip_medium_beta=False,
+        ath_scan_enabled=ath_scan_enabled,
+        ath_near_pct=prescan_cfg.ath_near_pct,
+        ath_lookback_days=prescan_cfg.ath_lookback_days,
+        ath_min_avg_turnover_rs=prescan_cfg.ath_min_avg_turnover_rs,
     )
 
     stocks = run_premarket_filter(cfg=cfg, universe=list(WATCHLIST))
@@ -47,6 +54,12 @@ def build_prescan_result() -> PreScanResult:
     fo_ban = set(nse.get_fo_ban_list())
     banned = [symbol for symbol in WATCHLIST if symbol in fo_ban]
     news = [stock.symbol for stock in stocks if stock.is_news_day]
+    near_ath = [stock for stock in stocks if stock.is_near_ath]
+    near_ath_line = (
+        f"Near ATH within {prescan_cfg.ath_near_pct:.1f}%: "
+        f"{', '.join(_fmt_stock(stock) for stock in near_ath[:10]) if near_ath else 'None'}\n"
+        if ath_scan_enabled else ""
+    )
 
     candidates = [stock.symbol for stock in stocks[: prescan_cfg.shortlist_size]]
 
@@ -56,6 +69,7 @@ def build_prescan_result() -> PreScanResult:
         f"{', '.join(_fmt_stock(stock) for stock in gap_up[:10]) if gap_up else 'None'}\n"
         f"Gap down < -{prescan_cfg.gap_threshold_pct:.1f}%: "
         f"{', '.join(_fmt_stock(stock) for stock in gap_down[:10]) if gap_down else 'None'}\n"
+        f"{near_ath_line}"
         f"F&O ban overlap: {', '.join(banned) if banned else 'None'}\n"
         f"News movers: {', '.join(news) if news else 'None'}\n"
         f"Today's trade candidates: {', '.join(candidates) if candidates else 'None'}"

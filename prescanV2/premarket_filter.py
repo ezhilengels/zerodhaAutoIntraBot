@@ -86,6 +86,10 @@ class FilteredStock:
     ban_status:      str    = "OK"          # "OK" | "BANNED" | "PRE_BAN"
     reason:          str    = ""            # why this stock passed
     beta_category:   str    = "UNKNOWN"     # "HIGH" | "MEDIUM"
+    ath_price:       float  = 0.0           # reference ATH / rolling high
+    ath_distance_pct: float = 999.0         # % below ATH, lower is closer
+    avg_turnover_rs: float  = 0.0           # average daily turnover
+    is_near_ath:     bool   = False         # within configured ATH distance
 
     @property
     def is_tradeable(self) -> bool:
@@ -322,6 +326,30 @@ class PremarketFilterConfig:
     skip_medium_beta:     bool  = False  # True = only HIGH beta stocks
     min_price:            float = 50.0   # skip penny stocks
     max_price:            float = 5000.0 # skip very high-priced stocks
+    ath_scan_enabled:     bool  = False  # True = enrich with ATH/turnover info
+    ath_near_pct:         float = 3.0    # treat stocks within this % as near ATH
+    ath_lookback_days:    int   = 252    # rolling daily lookback for ATH proxy
+    ath_min_avg_turnover_rs: float = 10_000_000.0  # Rs 1 crore average daily turnover
+
+
+def _compute_ath_snapshot(symbol: str, ltp: float, lookback_days: int) -> tuple[float, float, float]:
+    """
+    Returns (ath_price, ath_distance_pct, avg_daily_turnover_rs).
+    Falls back to zeros on data issues.
+    """
+    daily_df = nse.get_daily_candles(symbol, days=lookback_days)
+    if daily_df.empty:
+        return 0.0, 999.0, 0.0
+
+    daily_df = daily_df.copy()
+    daily_df["turnover"] = daily_df["close"] * daily_df["volume"]
+    ath_price = float(daily_df["high"].max()) if not daily_df["high"].empty else 0.0
+    avg_turnover = float(daily_df["turnover"].tail(20).mean()) if "turnover" in daily_df else 0.0
+    if ath_price <= 0 or ltp <= 0:
+        return ath_price, 999.0, avg_turnover
+
+    ath_distance_pct = max(0.0, ((ath_price - ltp) / ath_price) * 100)
+    return round(ath_price, 2), round(ath_distance_pct, 2), round(avg_turnover, 2)
 
 
 def run_premarket_filter(
@@ -418,12 +446,32 @@ def run_premarket_filter(
             log.debug(f"  ⛔ {symbol} — results day, skip (conservative mode)")
             continue
 
+        ath_price = 0.0
+        ath_distance_pct = 999.0
+        avg_turnover_rs = 0.0
+        is_near_ath = False
+        if cfg.ath_scan_enabled:
+            ath_price, ath_distance_pct, avg_turnover_rs = _compute_ath_snapshot(
+                symbol=symbol,
+                ltp=ltp,
+                lookback_days=cfg.ath_lookback_days,
+            )
+            if avg_turnover_rs < cfg.ath_min_avg_turnover_rs:
+                log.debug(
+                    f"  ⛔ {symbol} — avg turnover ₹{avg_turnover_rs:,.0f} below ATH floor "
+                    f"₹{cfg.ath_min_avg_turnover_rs:,.0f}"
+                )
+                continue
+            is_near_ath = ath_distance_pct <= cfg.ath_near_pct
+
         # Step 2h: Build reason string
         reasons = []
         if beta_cat == "HIGH":
             reasons.append("high-beta")
         if abs(gap_pct) > 1.5:
             reasons.append("strong-gap")
+        if is_near_ath:
+            reasons.append("near-ath")
         if news_today:
             reasons.append("results-day")
         if ban_status == "PRE_BAN":
@@ -440,12 +488,26 @@ def run_premarket_filter(
             ban_status    = ban_status,
             beta_category = beta_cat,
             reason        = ", ".join(reasons),
+            ath_price     = ath_price,
+            ath_distance_pct = ath_distance_pct,
+            avg_turnover_rs = avg_turnover_rs,
+            is_near_ath   = is_near_ath,
         )
         candidates.append(stock)
         log.info(f"  ✅ {stock}")
 
-    # ── Step 3: Sort by absolute gap (strongest movers first) ─────
-    candidates.sort(key=lambda s: abs(s.gap_pct), reverse=True)
+    # ── Step 3: Sort — optional ATH priority, otherwise strongest gaps first ──
+    if cfg.ath_scan_enabled:
+        candidates.sort(
+            key=lambda s: (
+                not s.is_near_ath,
+                s.ath_distance_pct,
+                -abs(s.gap_pct),
+                -s.avg_turnover_rs,
+            )
+        )
+    else:
+        candidates.sort(key=lambda s: abs(s.gap_pct), reverse=True)
 
     # ── Step 4: Summary ───────────────────────────────────────────
     log.info("=" * 60)
