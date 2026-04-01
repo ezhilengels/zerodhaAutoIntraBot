@@ -62,6 +62,7 @@ def parse_args() -> argparse.Namespace:
             "short_intraday_v1",
             "short_intraday_v2",
             "short_intraday_v3",
+            "short_intraday_v4",
             "ath_reversal_v5",
             "multi",
         ],
