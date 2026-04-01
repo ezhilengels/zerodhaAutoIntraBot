@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
             "pivot_breakout_v2",
             "ema_crossover",
             "short_intraday_v1",
+            "short_intraday_v2",
             "ath_reversal_v5",
             "multi",
         ],

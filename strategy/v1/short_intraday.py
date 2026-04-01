@@ -55,6 +55,7 @@ def _cfg() -> dict:
         "vwap_dist_atr_min": short_intraday_v1_cfg.vwap_dist_atr_min,
         "ema_dist_pct_min": short_intraday_v1_cfg.ema_dist_pct_min,
         "day_high_proximity": short_intraday_v1_cfg.day_high_proximity,
+        "vwap_break_buffer_pct": short_intraday_v1_cfg.vwap_break_buffer_pct,
         "atr_sl_mult": short_intraday_v1_cfg.atr_sl_mult,
         "atr_tp_mult": short_intraday_v1_cfg.atr_tp_mult,
         "market_symbol": short_intraday_v1_cfg.market_symbol,
@@ -105,8 +106,11 @@ def _add_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     df["avg_vol"] = df["volume"].rolling(cfg["volume_lookback"]).mean()
     df["vwap"] = _compute_vwap(df)
 
+    session_open = float(df.iloc[0]["open"])
     df["day_high"] = df["high"].cummax()
-    df["day_gain_pct"] = ((df["close"] - df.iloc[0]["open"]) / df.iloc[0]["open"]) * 100
+    # Mean-reversion shorts should key off the strongest extension reached
+    # during the day, not the final close of the current candle.
+    df["day_gain_pct"] = ((df["day_high"] - session_open) / session_open) * 100
     df["ema_dist_pct"] = (df["close"] - df["ema20"]) / df["ema20"].replace(0, np.nan)
     df["vwap_dist_atr"] = (df["close"] - df["vwap"]) / df["atr"].replace(0, np.nan)
     df["near_day_high"] = ((df["day_high"] - df["close"]) / df["day_high"].replace(0, np.nan)) <= cfg["day_high_proximity"]
@@ -158,6 +162,23 @@ def _lower_high(df: pd.DataFrame, swings: list[int]) -> bool:
     return df["high"].iloc[b] < df["high"].iloc[a] * 0.999
 
 
+def _failed_bounce_below_lower_high(df: pd.DataFrame, idx: int, swings: list[int]) -> bool:
+    """
+    Secondary entry style:
+    after a lower high is formed, allow a short when the current candle is bearish
+    and closes below the prior candle low while still trading below that lower high.
+    """
+    if idx < 1 or len(swings) < 2:
+        return False
+    lower_high_pos = swings[-1]
+    lower_high_price = float(df["high"].iloc[lower_high_pos])
+    curr_close = float(df["close"].iloc[idx])
+    prev_low = float(df["low"].iloc[idx - 1])
+    curr_high = float(df["high"].iloc[idx])
+    curr_bearish = bool(df["bearish"].iloc[idx])
+    return curr_bearish and curr_close < prev_low and curr_high <= lower_high_price
+
+
 def _breaks_recent_swing_low(df: pd.DataFrame, idx: int) -> bool:
     if idx < 2:
         return False
@@ -166,6 +187,12 @@ def _breaks_recent_swing_low(df: pd.DataFrame, idx: int) -> bool:
         return False
     swing_low = float(prior["low"].min())
     return float(df["close"].iloc[idx]) < swing_low
+
+
+def _breaks_prior_candle_low(df: pd.DataFrame, idx: int) -> bool:
+    if idx < 1:
+        return False
+    return float(df["close"].iloc[idx]) < float(df["low"].iloc[idx - 1])
 
 
 def _market_too_bullish(cfg: dict) -> bool:
@@ -224,21 +251,26 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
         score += 1
     if _lower_high(df, swings):
         score += 1
-    if _breaks_recent_swing_low(df, i):
+    failed_bounce = _failed_bounce_below_lower_high(df, i, swings)
+    breakdown = _breaks_recent_swing_low(df, i) or _breaks_prior_candle_low(df, i) or failed_bounce
+    if breakdown:
         score += 1
     if float(row["vwap_dist_atr"]) >= cfg["vwap_dist_atr_min"] or float(row["ema_dist_pct"]) >= cfg["ema_dist_pct_min"]:
         score += 1
     if bool(row["vol_ratio"] >= cfg["volume_climax_mult"] or (i >= 1 and bool(df["rejection"].iloc[i - 1]) and float(df["vol_ratio"].iloc[i - 1]) >= cfg["volume_climax_mult"])):
         score += 1
 
-    if float(row["close"]) >= float(row["vwap"]):
+    vwap_break_ok = float(row["close"]) <= float(row["vwap"]) * (1 - cfg["vwap_break_buffer_pct"])
+    if not vwap_break_ok:
         score -= 1
 
     if score < cfg["min_signal_score"]:
         return None
     if not bool(row["bearish"]):
         return None
-    if not _breaks_recent_swing_low(df, i):
+    if not breakdown:
+        return None
+    if not vwap_break_ok:
         return None
 
     entry = round(float(row["close"]), 2)

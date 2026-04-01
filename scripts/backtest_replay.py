@@ -29,6 +29,7 @@ from core.signal import Signal
 from strategy import ema_crossover, orb, pivot_breakout, pullback, vwap_reclaim, vwap_rsi
 from strategy.v1 import short_intraday as short_intraday_v1
 from strategy.v2 import pivot_breakout as pivot_breakout_v2
+from strategy.v2 import short_intraday as short_intraday_v2
 from strategy.v2 import vwap_reclaim as vwap_reclaim_v2
 from strategy.v2 import vwap_rsi as vwap_rsi_v2
 from strategy.v3 import vwap_rsi as vwap_rsi_v3
@@ -73,6 +74,7 @@ STRATEGY_MODULES: Dict[str, StrategyModule] = {
     "pivot_breakout_v2": pivot_breakout_v2,
     "ema_crossover": ema_crossover,
     "short_intraday_v1": short_intraday_v1,
+    "short_intraday_v2": short_intraday_v2,
     "ath_reversal_v5": ath_reversal_v5,
 }
 
@@ -83,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="multi",
-        choices=["pullback", "orb", "vwap_reclaim", "vwap_reclaim_v2", "vwap_rsi", "vwap_rsi_v2", "vwap_rsi_v3", "vwap_rsi_v4", "pivot_breakout", "pivot_breakout_v2", "ema_crossover", "short_intraday_v1", "ath_reversal_v5", "multi"],
+        choices=["pullback", "orb", "vwap_reclaim", "vwap_reclaim_v2", "vwap_rsi", "vwap_rsi_v2", "vwap_rsi_v3", "vwap_rsi_v4", "pivot_breakout", "pivot_breakout_v2", "ema_crossover", "short_intraday_v1", "short_intraday_v2", "ath_reversal_v5", "multi"],
         help="Strategy mode to replay.",
     )
     parser.add_argument(

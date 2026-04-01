@@ -22,6 +22,7 @@ from data                     import nse_provider as nse
 from strategy                 import ema_crossover, orb, pivot_breakout, pullback, vwap_reclaim, vwap_rsi
 from strategy.v1             import short_intraday as short_intraday_v1
 from strategy.v2             import pivot_breakout as pivot_breakout_v2
+from strategy.v2             import short_intraday as short_intraday_v2
 from strategy.v2             import vwap_reclaim as vwap_reclaim_v2
 from strategy.v2             import vwap_rsi as vwap_rsi_v2
 from strategy.v3             import vwap_rsi as vwap_rsi_v3
@@ -257,6 +258,17 @@ def _scan_once(state: SessionState) -> None:
             signal = short_intraday_v1.detect(symbol, state)
             if signal:
                 signal.strategy_names = ["short_intraday_v1"]
+                results[symbol] = True
+                telegram.send_signal_alert(signal, state)
+                time.sleep(2)
+    elif STRATEGY_MODE == "short_intraday_v2":
+        candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
+        log.info(f"📌 short_intraday_v2 candidates: {len(candidates)} / {len(scan_symbols)}")
+
+        for symbol in candidates:
+            signal = short_intraday_v2.detect(symbol, state)
+            if signal:
+                signal.strategy_names = ["short_intraday_v2"]
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
