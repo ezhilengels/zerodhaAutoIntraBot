@@ -14,7 +14,7 @@ import time
 from typing import Dict, Optional
 
 from utils.logger             import get_logger
-from config.settings          import WATCHLIST, scanner_cfg, execution_cfg, prescan_cfg, strategy_cfg, STRATEGY_MODE
+from config.settings          import WATCHLIST, scanner_cfg, execution_cfg, prescan_cfg, strategy_cfg, STRATEGY_MODE, STRATEGY_MODES
 from config.v2.short_intraday import short_intraday_v2_cfg
 from config.v4.short_intraday import short_intraday_v4_cfg
 from core.signal              import Signal
@@ -47,7 +47,8 @@ def _print_banner(state: SessionState) -> None:
     log.info("=" * 57)
     log.info("  PULLBACK TRADER + TELEGRAM BOT — STARTING")
     log.info(f"  Mode         : {'PAPER' if execution_cfg.paper_trading else 'LIVE'}")
-    log.info(f"  Strategy     : {STRATEGY_MODE}")
+    active_strategies = ", ".join(STRATEGY_MODES) if STRATEGY_MODES else STRATEGY_MODE
+    log.info(f"  Strategy     : {active_strategies}")
     log.info(f"  Watchlist    : {WATCHLIST}")
     log.info(f"  Max trades   : {scanner_cfg.max_trades_per_day}")
     log.info(f"  Trade window : {scanner_cfg.trade_start_time} – {scanner_cfg.trade_end_time}")
@@ -71,6 +72,55 @@ def _load_prev_closes(state: SessionState) -> None:
 def _fmt_scan_summary(results: Dict[str, bool]) -> str:
     lines = [f"{symbol}: {'TRUE' if matched else 'FALSE'}" for symbol, matched in results.items()]
     return "📋 *Scan Summary*\n" + "\n".join(lines)
+
+
+def _fmt_named_scan_summary(title: str, results: Dict[str, bool]) -> str:
+    lines = [f"{symbol}: {'TRUE' if matched else 'FALSE'}" for symbol, matched in results.items()]
+    return f"📋 *{title}*\n" + "\n".join(lines)
+
+
+def _active_strategy_modes() -> list[str]:
+    return STRATEGY_MODES if STRATEGY_MODES else [STRATEGY_MODE]
+
+
+def _run_strategy_scan(mode: str, scan_symbols: list[str], state: SessionState) -> Dict[str, bool]:
+    results = {symbol: False for symbol in scan_symbols}
+    candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
+
+    if mode == "vwap_rsi_v4":
+        log.info(f"📌 VWAP+RSI v4 candidates: {len(candidates)} / {len(scan_symbols)}")
+        for symbol in candidates:
+            signal = vwap_rsi_v4.detect(symbol, state)
+            if signal:
+                signal.strategy_names = ["vwap_rsi_v4"]
+                results[symbol] = True
+                telegram.send_signal_alert(signal, state, title="VWAP_RSI_V4 SIGNAL")
+                time.sleep(2)
+        return results
+
+    if mode == "short_intraday_v4":
+        log.info(f"📌 short_intraday_v4 candidates: {len(candidates)} / {len(scan_symbols)}")
+        found: list[Signal] = []
+        for symbol in candidates:
+            signal = short_intraday_v4.detect(symbol, state)
+            if signal:
+                found.append(signal)
+
+        ranked = sorted(found, key=lambda sig: getattr(sig, "ema_dist", 0.0), reverse=True)
+        for signal in ranked[: short_intraday_v4_cfg.max_ranked_signals]:
+            signal.strategy_names = ["short_intraday_v4"]
+            results[signal.symbol] = True
+            telegram.send_signal_alert(signal, state, title="SHORT_INTRADAY_V4 SIGNAL")
+            time.sleep(2)
+
+        if len(ranked) > short_intraday_v4_cfg.max_ranked_signals:
+            log.info(
+                f"✂️ short_intraday_v4 ranked {len(ranked)} signals, "
+                f"alerted top {short_intraday_v4_cfg.max_ranked_signals}"
+            )
+        return results
+
+    return results
 
 
 def _gap_up_quote(symbol: str, state: SessionState) -> Optional[dict]:
@@ -118,7 +168,63 @@ def _scan_once(state: SessionState) -> None:
     log.info(f"🔍 Scanning {len(scan_symbols)} stocks…")
     results = {symbol: False for symbol in scan_symbols}
 
-    if STRATEGY_MODE == "multi":
+    active_modes = _active_strategy_modes()
+    if len(active_modes) > 1:
+        titled_results: list[tuple[str, Dict[str, bool]]] = []
+        for mode in active_modes:
+            mode_results = _run_strategy_scan(mode, scan_symbols, state)
+            titled_results.append((mode, mode_results))
+            for symbol, matched in mode_results.items():
+                results[symbol] = results[symbol] or matched
+
+        if execution_cfg.show_scan_results:
+            for mode, mode_results in titled_results:
+                telegram.send_message(_fmt_named_scan_summary(f"{mode.upper()} Scan Summary", mode_results))
+        return
+
+    effective_mode = active_modes[0]
+
+    if effective_mode == "dual_v4":
+        candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
+        log.info(f"📌 Dual v4 candidates: {len(candidates)} / {len(scan_symbols)}")
+
+        long_results = {symbol: False for symbol in scan_symbols}
+        short_results = {symbol: False for symbol in scan_symbols}
+
+        for symbol in candidates:
+            signal = vwap_rsi_v4.detect(symbol, state)
+            if signal:
+                signal.strategy_names = ["vwap_rsi_v4"]
+                results[symbol] = True
+                long_results[symbol] = True
+                telegram.send_signal_alert(signal, state, title="VWAP_RSI_V4 SIGNAL")
+                time.sleep(2)
+
+        found_short: list[Signal] = []
+        for symbol in candidates:
+            signal = short_intraday_v4.detect(symbol, state)
+            if signal:
+                found_short.append(signal)
+
+        ranked_short = sorted(found_short, key=lambda sig: getattr(sig, "ema_dist", 0.0), reverse=True)
+        for signal in ranked_short[: short_intraday_v4_cfg.max_ranked_signals]:
+            signal.strategy_names = ["short_intraday_v4"]
+            results[signal.symbol] = True
+            short_results[signal.symbol] = True
+            telegram.send_signal_alert(signal, state, title="SHORT_INTRADAY_V4 SIGNAL")
+            time.sleep(2)
+
+        if len(ranked_short) > short_intraday_v4_cfg.max_ranked_signals:
+            log.info(
+                f"✂️ short_intraday_v4 ranked {len(ranked_short)} signals, "
+                f"alerted top {short_intraday_v4_cfg.max_ranked_signals}"
+            )
+
+        if execution_cfg.show_scan_results:
+            telegram.send_message(_fmt_named_scan_summary("VWAP_RSI_V4 Scan Summary", long_results))
+            telegram.send_message(_fmt_named_scan_summary("SHORT_INTRADAY_V4 Scan Summary", short_results))
+        return
+    elif effective_mode == "multi":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 Multi-strategy candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -145,7 +251,7 @@ def _scan_once(state: SessionState) -> None:
             results[symbol] = True
             telegram.send_signal_alert(primary_signal, state, title="MULTI-STRATEGY SIGNAL")
             time.sleep(2)
-    elif STRATEGY_MODE == "orb":
+    elif effective_mode == "orb":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 ORB candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -156,7 +262,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "vwap_reclaim":
+    elif effective_mode == "vwap_reclaim":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 VWAP reclaim candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -167,7 +273,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "vwap_reclaim_v2":
+    elif effective_mode == "vwap_reclaim_v2":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 VWAP reclaim v2 candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -178,7 +284,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "vwap_rsi":
+    elif effective_mode == "vwap_rsi":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 VWAP+RSI candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -189,7 +295,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "vwap_rsi_v2":
+    elif effective_mode == "vwap_rsi_v2":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 VWAP+RSI v2 candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -200,7 +306,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "vwap_rsi_v3":
+    elif effective_mode == "vwap_rsi_v3":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 VWAP+RSI v3 candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -211,7 +317,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "vwap_rsi_v4":
+    elif effective_mode == "vwap_rsi_v4":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 VWAP+RSI v4 candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -222,7 +328,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "pivot_breakout":
+    elif effective_mode == "pivot_breakout":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 Pivot breakout candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -233,7 +339,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "pivot_breakout_v2":
+    elif effective_mode == "pivot_breakout_v2":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 Pivot breakout v2 candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -244,7 +350,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "ema_crossover":
+    elif effective_mode == "ema_crossover":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 EMA crossover candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -255,7 +361,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "short_intraday_v1":
+    elif effective_mode == "short_intraday_v1":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 short_intraday_v1 candidates: {len(candidates)} / {len(scan_symbols)}")
 
@@ -266,7 +372,7 @@ def _scan_once(state: SessionState) -> None:
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
                 time.sleep(2)
-    elif STRATEGY_MODE == "short_intraday_v2":
+    elif effective_mode == "short_intraday_v2":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 short_intraday_v2 candidates: {len(candidates)} / {len(scan_symbols)}")
         found: list[Signal] = []
@@ -287,7 +393,7 @@ def _scan_once(state: SessionState) -> None:
                 f"✂️ short_intraday_v2 ranked {len(ranked)} signals, "
                 f"alerted top {short_intraday_v2_cfg.max_ranked_signals}"
             )
-    elif STRATEGY_MODE == "short_intraday_v3":
+    elif effective_mode == "short_intraday_v3":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 short_intraday_v3 candidates: {len(candidates)} / {len(scan_symbols)}")
         found: list[Signal] = []
@@ -302,7 +408,7 @@ def _scan_once(state: SessionState) -> None:
             results[signal.symbol] = True
             telegram.send_signal_alert(signal, state)
             time.sleep(2)
-    elif STRATEGY_MODE == "short_intraday_v4":
+    elif effective_mode == "short_intraday_v4":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 short_intraday_v4 candidates: {len(candidates)} / {len(scan_symbols)}")
         found: list[Signal] = []
@@ -317,7 +423,7 @@ def _scan_once(state: SessionState) -> None:
             results[signal.symbol] = True
             telegram.send_signal_alert(signal, state)
             time.sleep(2)
-    elif STRATEGY_MODE == "short_intraday_v6":
+    elif effective_mode == "short_intraday_v6":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
         log.info(f"📌 short_intraday_v6 candidates: {len(candidates)} / {len(scan_symbols)}")
         found: list[Signal] = []

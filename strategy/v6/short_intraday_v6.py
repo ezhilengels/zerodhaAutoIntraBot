@@ -140,6 +140,7 @@ def _detect_rsi_divergence(
     recent_high: float,
     rsi_min: float,
     price_swing_lookback: int,
+    high_proximity_pct: float,
 ) -> bool:
     """
     True bearish RSI divergence:
@@ -152,7 +153,7 @@ def _detect_rsi_divergence(
     fired on any single-candle RSI dip. Now locates the prior swing high candle
     and compares RSIs at those two distinct price extremes.
     """
-    if curr_high < recent_high:
+    if curr_high < recent_high * (1 - high_proximity_pct):
         return False  # not at the swing high, skip
 
     lookback = df.tail(price_swing_lookback)
@@ -221,8 +222,12 @@ def _detect_exhaustion(df: pd.DataFrame, symbol: str) -> dict:
     curr_close = float(curr["close"])
     curr_high  = float(curr["high"])
 
-    ema_dist  = ((curr_close - curr_ema) / curr_ema) if curr_ema > 0 else 0.0
-    vol_ratio = (float(curr["volume"]) / avg_vol)    if avg_vol > 0  else 0.0
+    prev = df.iloc[-2]
+    prev_close = float(prev["close"])
+    prev_vwap = float(prev["vwap"]) if pd.notna(prev["vwap"]) else 0.0
+
+    ema_dist = ((curr_close - curr_ema) / curr_ema) if curr_ema > 0 else 0.0
+    vol_ratio = (float(curr["volume"]) / avg_vol) if avg_vol > 0 else 0.0
 
     signals: list[str] = []
 
@@ -234,6 +239,7 @@ def _detect_exhaustion(df: pd.DataFrame, symbol: str) -> dict:
         recent_high=recent_high,
         rsi_min=short_intraday_v6_cfg.rsi_divergence_min,  # Fix 10: raised to 65
         price_swing_lookback=price_swing_lookback,
+        high_proximity_pct=short_intraday_v6_cfg.high_proximity_pct,
     ):
         signals.append("RSI Divergence")
 
@@ -245,21 +251,24 @@ def _detect_exhaustion(df: pd.DataFrame, symbol: str) -> dict:
     if ema_dist > short_intraday_v6_cfg.ema_dist_threshold:
         signals.append(f"Overextended ({ema_dist * 100:.2f}%)")
 
-    is_below_vwap = curr_vwap > 0 and curr_close < curr_vwap
+    # A strict close below VWAP was starving entries on the cleaned shortlist.
+    # Accept either a fresh break below VWAP or a clear rejection through VWAP.
+    close_below_vwap = curr_vwap > 0 and (
+        curr_close <= curr_vwap * (1 + short_intraday_v6_cfg.vwap_break_buffer_pct)
+    )
+    vwap_rejection = (
+        curr_vwap > 0
+        and prev_vwap > 0
+        and prev_close >= prev_vwap
+        and float(curr["low"]) <= curr_vwap
+        and curr_close < prev_close
+    )
+    is_below_vwap = close_below_vwap or vwap_rejection
 
     # Fix 8: min_confirmations=3 — all three signals must fire
     confirmed = (
         len(signals) >= short_intraday_v6_cfg.min_confirmations
         and is_below_vwap
-    )
-
-    log.warning(
-        f"DEBUG {symbol} | rsi={curr_rsi:.1f} | "
-        f"vol_ratio={vol_ratio:.2f}x | "
-        f"ema_dist={ema_dist*100:.2f}% | "
-        f"below_vwap={is_below_vwap} | "
-        f"intraday_run={intraday_return*100:.2f}% | "
-        f"signals={signals}"
     )
 
     # Fix 2: stop loss scoped to price_swing_lookback window, not full session

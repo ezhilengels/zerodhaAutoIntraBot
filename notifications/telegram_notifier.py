@@ -33,6 +33,7 @@ from data import nse_provider as nse
 from utils.logger    import get_logger
 
 log = get_logger(__name__)
+ALERT_EXPIRY_SECS = 10 * 60
 
 # Injected by init() — used inside the async button handler
 _kite          = None
@@ -86,6 +87,15 @@ def send_signal_alert(
     Stores the signal in session_state.pending_signals under a unique key
     so the button handler can retrieve it asynchronously.
     """
+    strategy_name = signal.strategy_names[0] if signal.strategy_names else ""
+    if session_state.has_pending_alert(signal.symbol, strategy_name):
+        log.info(
+            f"🔁 Pending alert already exists for {signal.symbol}"
+            + (f" [{strategy_name}]" if strategy_name else "")
+            + " — skipping duplicate alert"
+        )
+        return
+
     callback_key = f"order_{signal.symbol}_{int(time.time())}"
     session_state.add_pending(callback_key, signal)
 
@@ -377,6 +387,14 @@ async def _button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("confirm_"):
         callback_key = data[len("confirm_"):]
+        try:
+            created_ts = int(callback_key.rsplit("_", 1)[-1])
+        except (TypeError, ValueError):
+            created_ts = 0
+        if created_ts and (time.time() - created_ts) > ALERT_EXPIRY_SECS:
+            _session_state.pop_pending(callback_key)
+            await query.edit_message_text("⚠️ Signal expired. Wait for the next fresh scan alert.")
+            return
         signal       = _session_state.pop_pending(callback_key)
 
         if not signal:

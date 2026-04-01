@@ -240,9 +240,12 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
         stop_loss = round(entry - cfg["atr_sl_mult"] * atr, 2)
         target = round(entry + cfg["atr_tp_mult"] * atr, 2)
     else:
-        return None
+        stop_loss = round(entry + cfg["atr_sl_mult"] * atr, 2)
+        target = round(entry - cfg["atr_tp_mult"] * atr, 2)
 
-    if stop_loss >= entry:
+    if signal == 1 and stop_loss >= entry:
+        return None
+    if signal == -1 and stop_loss <= entry:
         return None
 
     qty = position_size(
@@ -264,11 +267,15 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
     # be_trigger = entry + (atr_be_mult / atr_sl_mult) × risk_per_unit
     # Using ratio keeps it consistent even if ATR itself isn't stored on Signal.
     be_mult = cfg.get("atr_be_mult", 0.0)
-    risk_per_unit = entry - stop_loss
-    be_trigger = round(entry + (be_mult / cfg["atr_sl_mult"]) * risk_per_unit, 2) if be_mult > 0 else 0.0
+    risk_per_unit = abs(entry - stop_loss)
+    if be_mult > 0:
+        be_offset = (be_mult / cfg["atr_sl_mult"]) * risk_per_unit
+        be_trigger = round(entry + be_offset, 2) if signal == 1 else round(entry - be_offset, 2)
+    else:
+        be_trigger = 0.0
 
     log.info(
-        f"✅ VWAP+RSI v4 | {symbol} | entry=₹{entry}  sl=₹{stop_loss}  target=₹{target}  "
+        f"✅ VWAP+RSI v4 | {symbol} | {'LONG' if signal == 1 else 'SHORT'} | entry=₹{entry}  sl=₹{stop_loss}  target=₹{target}  "
         f"qty={qty}  score={score}/5  vwap=₹{vwap_val:.2f}  rsi={rsi_val:.1f}  vol={vol_ratio:.2f}x"
         + (f"  be=₹{be_trigger}" if be_trigger else "")
     )
@@ -285,6 +292,7 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
         rsi=round(rsi_val, 1),
         vol_ratio=round(vol_ratio, 2),
         be_stop_trigger=be_trigger,
+        direction="LONG" if signal == 1 else "SHORT",
     )
 
 
@@ -403,9 +411,12 @@ def backtest(df: pd.DataFrame, cfg: dict = None) -> pd.DataFrame:
 
     trades = []
     signal_rows = df[df["signal"] != 0].copy()
+    next_available_loc = 0
 
     for idx, row in signal_rows.iterrows():
         loc = df.index.get_loc(idx)
+        if loc < next_available_loc:
+            continue
         if loc + 1 >= len(df):
             continue
 
@@ -421,6 +432,8 @@ def backtest(df: pd.DataFrame, cfg: dict = None) -> pd.DataFrame:
         be_active  = False                         # has breakeven been triggered?
         be_trigger = be_mult * atr if be_mult > 0 else None
 
+        exit_loc = len(df) - 1
+
         # walk forward to find SL/TP hit
         for j in range(loc + 1, len(df)):
             c = df.iloc[j]
@@ -429,14 +442,30 @@ def backtest(df: pd.DataFrame, cfg: dict = None) -> pd.DataFrame:
                 if be_trigger and not be_active and c["high"] >= fill_price + be_trigger:
                     sl = fill_price
                     be_active = True
-                if c["low"]  <= sl:  pnl = (sl - fill_price) * qty; reason = "BE" if be_active else "SL"; break
-                if c["high"] >= tp:  pnl = (tp - fill_price) * qty; reason = "TP"; break
+                if c["low"] <= sl:
+                    pnl = (sl - fill_price) * qty
+                    reason = "BE" if be_active else "SL"
+                    exit_loc = j
+                    break
+                if c["high"] >= tp:
+                    pnl = (tp - fill_price) * qty
+                    reason = "TP"
+                    exit_loc = j
+                    break
             else:                # SHORT
                 if be_trigger and not be_active and c["low"] <= fill_price - be_trigger:
                     sl = fill_price
                     be_active = True
-                if c["high"] >= sl:  pnl = (fill_price - sl) * qty; reason = "BE" if be_active else "SL"; break
-                if c["low"]  <= tp:  pnl = (fill_price - tp) * qty; reason = "TP"; break
+                if c["high"] >= sl:
+                    pnl = (fill_price - sl) * qty
+                    reason = "BE" if be_active else "SL"
+                    exit_loc = j
+                    break
+                if c["low"] <= tp:
+                    pnl = (fill_price - tp) * qty
+                    reason = "TP"
+                    exit_loc = j
+                    break
 
         if pnl is None:
             exit_price = df.iloc[-1]["close"]
@@ -453,6 +482,8 @@ def backtest(df: pd.DataFrame, cfg: dict = None) -> pd.DataFrame:
             "pnl"        : round(pnl, 2),
             "exit_reason": reason,
         })
+
+        next_available_loc = exit_loc + 1
 
     return pd.DataFrame(trades)
 
@@ -565,7 +596,14 @@ class VWAPRSIBot:
             if s >= self.cfg["min_signal_score"]:
                 sl  = close - self.cfg["atr_sl_mult"] * atr
                 tp  = close + self.cfg["atr_tp_mult"] * atr
-                qty = position_size(close, sl, self.cfg)
+                qty = position_size(
+                    close,
+                    sl,
+                    self.cfg["capital"],
+                    self.cfg["risk_pct"] * 100,
+                    self.cfg["capital"],
+                    1.0,
+                )
                 self._enter("LONG", close, sl, tp, qty, s)
 
         elif last["rsi_cross_dn"] and not last["above_vwap"]:
@@ -573,7 +611,14 @@ class VWAPRSIBot:
             if s >= self.cfg["min_signal_score"]:
                 sl  = close + self.cfg["atr_sl_mult"] * atr
                 tp  = close - self.cfg["atr_tp_mult"] * atr
-                qty = position_size(close, sl, self.cfg)
+                qty = position_size(
+                    close,
+                    sl,
+                    self.cfg["capital"],
+                    self.cfg["risk_pct"] * 100,
+                    self.cfg["capital"],
+                    1.0,
+                )
                 self._enter("SHORT", close, sl, tp, qty, s)
 
     def _enter(self, side, price, sl, tp, qty, score):

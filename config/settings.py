@@ -94,6 +94,57 @@ SHORT_INTRADAY_V3_ATH_CHECK_WATCHLIST: List[str] = [
     "OLAELEC",
 ]
 
+NIFTY50_WATCHLIST: List[str] = [
+    "ADANIENT",
+    "ADANIPORTS",
+    "APOLLOHOSP",
+    "ASIANPAINT",
+    "AXISBANK",
+    "BAJAJ-AUTO",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "CIPLA",
+    "COALINDIA",
+    "DRREDDY",
+    "EICHERMOT",
+    "GRASIM",
+    "HCLTECH",
+    "HDFCBANK",
+    "HDFCLIFE",
+    "HINDALCO",
+    "HINDUNILVR",
+    "ICICIBANK",
+    "INDIGO",
+    "INFY",
+    "ITC",
+    "JIOFIN",
+    "JSWSTEEL",
+    "KOTAKBANK",
+    "LT",
+    "M&M",
+    "MARUTI",
+    "NESTLEIND",
+    "NTPC",
+    "ONGC",
+    "POWERGRID",
+    "RELIANCE",
+    "SBILIFE",
+    "SBIN",
+    "SHRIRAMFIN",
+    "SUNPHARMA",
+    "TATACONSUM",
+    "TATASTEEL",
+    "TCS",
+    "TECHM",
+    "TITAN",
+    "TMPV",
+    "TRENT",
+    "ULTRACEMCO",
+    "WIPRO",
+]
+
 NIFTY100_WATCHLIST: List[str] = [
     "ABB",
     "ADANIENSOL",
@@ -201,6 +252,8 @@ WATCHLIST_MODE: str = os.getenv("WATCHLIST_MODE", "custom").strip().lower()
 WATCHLIST: List[str]
 if WATCHLIST_MODE == "nifty100":
     WATCHLIST = NIFTY100_WATCHLIST
+elif WATCHLIST_MODE == "nifty50":
+    WATCHLIST = NIFTY50_WATCHLIST
 elif WATCHLIST_MODE in {"short_intraday_v3_ath", "ath_short_v3", "athcheck"}:
     WATCHLIST = SHORT_INTRADAY_V3_ATH_CHECK_WATCHLIST
 elif WATCHLIST_MODE in {"pivot_breakout_v2", "pivotv2", "pivot"}:
@@ -345,6 +398,11 @@ class PreScanConfig:
 
 
 STRATEGY_MODE: str = os.getenv("STRATEGY_MODE", "pullback").strip().lower()
+STRATEGY_MODES: List[str] = [
+    mode.strip().lower()
+    for mode in os.getenv("STRATEGY_MODES", "").split(",")
+    if mode.strip()
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

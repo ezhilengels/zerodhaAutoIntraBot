@@ -57,6 +57,18 @@ class SessionState:
     def pop_pending(self, key: str) -> Optional[Signal]:
         return self.pending_signals.pop(key, None)
 
+    def has_pending_alert(self, symbol: str, strategy_name: Optional[str] = None) -> bool:
+        symbol = symbol.upper()
+        for signal in self.pending_signals.values():
+            if signal.symbol.upper() != symbol:
+                continue
+            if strategy_name is None:
+                return True
+            active_strategy = signal.strategy_names[0] if signal.strategy_names else ""
+            if active_strategy == strategy_name:
+                return True
+        return False
+
     # ─────────────────────────────────────────────────────────────────────
     #  Summary
     # ─────────────────────────────────────────────────────────────────────

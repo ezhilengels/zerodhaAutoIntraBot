@@ -78,9 +78,10 @@ class ShortIntradayV6Cfg:
 
     # -- Price swing --------------------------------------------------------
     price_swing_lookback: int = 20
+    high_proximity_pct: float = 0.002
 
     # -- EMA distance -------------------------------------------------------
-    ema_dist_threshold: float = 0.03
+    ema_dist_threshold: float = 0.01
 
     # -- Turnover filter ----------------------------------------------------
     min_avg_turnover_rs: float = 5_000_000
@@ -92,9 +93,10 @@ class ShortIntradayV6Cfg:
     stop_buffer_pct: float = 0.002
     target_rr_mult: float = 1.5
     min_target_buffer_pct: float = 0.005
+    vwap_break_buffer_pct: float = 0.0015
 
     # -- Signal confirmations ----------------------------------------------
-    min_confirmations: int = 2
+    min_confirmations: int = 1
 
     # -- ATH check ----------------------------------------------------------
     ath_check_enabled: bool = False
