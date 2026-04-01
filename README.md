@@ -1,4 +1,4 @@
-# Pullback Trader
+# zerodhaAutoIntraBot
 
 Gap-up pullback-to-VWAP intraday scanner with Telegram alerts and Kite Connect auto-orders.
 
