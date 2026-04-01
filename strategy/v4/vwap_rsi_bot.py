@@ -47,6 +47,7 @@ def _cfg_dict() -> dict:
         "risk_pct": vwap_rsi_v4_cfg.risk_pct,
         "enable_shorts": vwap_rsi_v4_cfg.enable_shorts,
         "vwap_max_dist_pct": vwap_rsi_v4_cfg.vwap_max_dist_pct,
+        "blocklist": vwap_rsi_v4_cfg.blocklist,
     }
 
 
@@ -190,6 +191,9 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
     now = current_hhmm()
     if now < vwap_rsi_v4_cfg.session_start or now > vwap_rsi_v4_cfg.session_end:
         return None
+    if symbol.upper() in vwap_rsi_v4_cfg.blocklist:
+        log.debug(f"⛔ {symbol} is in blocklist — skipping")
+        return None
 
     df = nse.get_candles(symbol)
     df = completed_candles(df)
@@ -209,11 +213,9 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
     signal = 0
     score = 0
     if bool(last["rsi_cross_up"]) and bool(last["above_vwap"]):
-        # Hard gate 1: volume must confirm
-        if not bool(last["vol_spike"]):
-            return None
-        # Hard gate 2: price must not be extended too far above VWAP
-        # ema_bull kept as score-only — early-trend entries need room to breathe
+        # Hard gate: price must not be extended too far above VWAP (avoids chasing)
+        # vol_spike and ema_bull kept as score-only — momentum names signal before
+        # volume fully catches up, so hard-gating on volume kills early-trend entries
         vwap_dist = float(last["vwap_dist_pct"]) if pd.notna(last["vwap_dist_pct"]) else 0.0
         if vwap_dist > cfg["vwap_max_dist_pct"]:
             return None
@@ -280,12 +282,17 @@ def detect(symbol: str, state: SessionState) -> Optional[Signal]:
 #  CORE SIGNAL GENERATOR
 # ─────────────────────────────────────────────
 
-def generate_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+def generate_signals(df: pd.DataFrame, cfg: dict, symbol: str = "") -> pd.DataFrame:
     """
     Main signal engine.
     Returns df with columns: signal, score, entry, sl, tp, qty
     signal:  1 = LONG, -1 = SHORT, 0 = NO TRADE
     """
+    if symbol.upper() in cfg.get("blocklist", set()):
+        df["signal"] = 0; df["score"] = 0
+        df["entry"] = np.nan; df["sl"] = np.nan
+        df["tp"] = np.nan; df["qty"] = 0
+        return df
     df = add_all_indicators(df, cfg)
 
     signals    = []
@@ -321,14 +328,9 @@ def generate_signals(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
         # ── LONG check ──
         if row["rsi_cross_up"] and row["above_vwap"]:
-            # Hard gate 1: volume must confirm the move
-            if not row["vol_spike"]:
-                signals.append(0); scores.append(0)
-                entries.append(np.nan); sls.append(np.nan)
-                tps.append(np.nan); qtys.append(0)
-                continue
-            # Hard gate 2: price must not be extended too far above VWAP
-            # ema_bull kept as score-only — early-trend entries need room to breathe
+            # Hard gate: price must not be extended too far above VWAP (avoids chasing)
+            # vol_spike and ema_bull kept as score-only — momentum names signal before
+            # volume fully catches up, so hard-gating on volume kills early-trend entries
             if pd.notna(row["vwap_dist_pct"]) and row["vwap_dist_pct"] > cfg["vwap_max_dist_pct"]:
                 signals.append(0); scores.append(0)
                 entries.append(np.nan); sls.append(np.nan)

@@ -33,6 +33,14 @@ class VWAPRsiV4Config:
     # 0.005 = 0.5% was too tight and blocked early-trend gap-up names like EICHERMOT
     # 0.010 = 1.0% gives breathing room while still rejecting extended entries
     vwap_max_dist_pct: float = float(os.getenv("VWAP_RSI_V4_VWAP_MAX_DIST_PCT", "0.010"))
+    # Comma-separated list of symbols to never trade, regardless of signal score
+    # Use this for chronic underperformers identified in backtests
+    # Example: VWAP_RSI_V4_BLOCKLIST=MARUTI,TECHM,SBILIFE
+    blocklist: set = None
+
+    def __post_init__(self):
+        raw = os.getenv("VWAP_RSI_V4_BLOCKLIST", "").strip()
+        self.blocklist = {s.strip().upper() for s in raw.split(",") if s.strip()}
 
 
 vwap_rsi_v4_cfg = VWAPRsiV4Config()
