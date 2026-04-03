@@ -26,7 +26,7 @@ import pandas as pd
 from core.signal import Signal
 from core.session import SessionState
 from strategy.indicators import avg_volume, completed_candles, position_size
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from config.settings import strategy_cfg
 from utils.logger import get_logger
 from utils.time_helpers import current_hhmm

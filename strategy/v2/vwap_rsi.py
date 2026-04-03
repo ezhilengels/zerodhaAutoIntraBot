@@ -19,7 +19,7 @@ from strategy.indicators import (
     avg_volume, completed_candles, position_size,
     rsi as calc_rsi, vwap as calc_vwap
 )
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from config.settings import strategy_cfg
 from config.v2.vwap_rsi import vwap_rsi_v2_cfg
 from utils.logger import get_logger

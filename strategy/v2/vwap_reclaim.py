@@ -22,7 +22,7 @@ from strategy.indicators import (
     position_size,
     vwap as calc_vwap,
 )
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from config.settings import strategy_cfg
 from config.v2.vwap_reclaim import vwap_reclaim_v2_cfg
 from utils.logger import get_logger

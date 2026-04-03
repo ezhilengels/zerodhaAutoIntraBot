@@ -12,7 +12,7 @@ from typing import Optional
 from core.signal import Signal
 from core.session import SessionState
 from strategy.indicators import avg_volume, completed_candles, position_size, rsi as calc_rsi, vwap as calc_vwap
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from config.settings import strategy_cfg, vwap_rsi_cfg
 from utils.logger import get_logger
 from utils.time_helpers import current_hhmm

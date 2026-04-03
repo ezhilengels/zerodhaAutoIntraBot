@@ -40,7 +40,7 @@ from config.settings import strategy_cfg
 from config.v6.short_intraday import short_intraday_v6_cfg
 from core.session import SessionState
 from core.signal import Signal
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from strategy.indicators import completed_candles, position_size
 from utils.logger import get_logger
 from utils.time_helpers import current_hhmm

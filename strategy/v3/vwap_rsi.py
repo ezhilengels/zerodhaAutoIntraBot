@@ -20,7 +20,7 @@ from strategy.indicators import (
     rsi as calc_rsi,
     vwap as calc_vwap,
 )
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from config.settings import strategy_cfg
 from config.v3.vwap_rsi import vwap_rsi_v3_cfg
 from utils.logger import get_logger

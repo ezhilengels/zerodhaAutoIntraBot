@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.settings import WATCHLIST, STRATEGY_MODE, prescan_cfg
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from core.prescan_short_sell_filters import PrescanConfig as ShortPrescanConfig, apply_prescan_filters
 from prescanV2.premarket_filter import (
     PremarketFilterConfig,
@@ -24,6 +24,7 @@ from prescanV2.premarket_filter import (
 class PreScanResult:
     summary: str
     candidates: list[str]
+    is_api_fail: bool = False
 
 
 def _fmt_stock(stock: FilteredStock) -> str:
@@ -49,6 +50,7 @@ def build_prescan_result() -> PreScanResult:
     )
 
     stocks = run_premarket_filter(cfg=cfg, universe=list(WATCHLIST))
+    is_api_fail = (len(WATCHLIST) > 0 and not stocks)
 
     gap_up = [stock for stock in stocks if stock.gap_direction == "UP"]
     gap_down = [stock for stock in stocks if stock.gap_direction == "DOWN"]
@@ -66,6 +68,7 @@ def build_prescan_result() -> PreScanResult:
 
     summary = (
         "📡 *MIS Pre-Scan v2*\n"
+        + ("⚠️ *API FAILURE: Could not fetch quotes from NSE*\n" if is_api_fail else "") +
         f"Gap up > {prescan_cfg.gap_threshold_pct:.1f}%: "
         f"{', '.join(_fmt_stock(stock) for stock in gap_up[:10]) if gap_up else 'None'}\n"
         f"Gap down < -{prescan_cfg.gap_threshold_pct:.1f}%: "
@@ -76,7 +79,7 @@ def build_prescan_result() -> PreScanResult:
         f"Today's trade candidates: {', '.join(candidates) if candidates else 'None'}"
     )
 
-    return PreScanResult(summary=summary, candidates=candidates)
+    return PreScanResult(summary=summary, candidates=candidates, is_api_fail=is_api_fail)
 
 
 def build_prescan_summary() -> str:
@@ -113,6 +116,7 @@ def build_short_prescan_result() -> PreScanResult:
 
     shortlist = apply_prescan_filters(raw_symbols, gap_data, cfg)
     candidates = shortlist[: prescan_cfg.shortlist_size]
+    is_api_fail = (len(WATCHLIST) > 0 and not raw_symbols)
 
     lines = []
     for symbol in candidates:
@@ -123,8 +127,9 @@ def build_short_prescan_result() -> PreScanResult:
 
     summary = (
         "📡 *Short Pre-Scan*\n"
+        + ("⚠️ *API FAILURE: Could not fetch quotes from NSE*\n" if is_api_fail else "") +
         f"Gap 1.5% to 5.0%, prev vol >= 500000, price >= 200\n"
         f"Today's short candidates: {', '.join(lines) if lines else 'None'}"
     )
 
-    return PreScanResult(summary=summary, candidates=candidates)
+    return PreScanResult(summary=summary, candidates=candidates, is_api_fail=is_api_fail)

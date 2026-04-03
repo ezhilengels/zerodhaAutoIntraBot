@@ -29,7 +29,7 @@ from core.signal     import Signal
 from core.prescan    import build_prescan_result
 from core.session    import SessionState
 from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, scanner_cfg, execution_cfg, strategy_cfg
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from utils.logger    import get_logger
 
 log = get_logger(__name__)

@@ -25,7 +25,7 @@ import pandas as pd
 import requests
 
 from config.settings import WATCHLIST
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from utils.logger import get_logger
 
 log = get_logger(__name__)

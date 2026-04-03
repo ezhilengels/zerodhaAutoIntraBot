@@ -36,7 +36,7 @@ warnings.filterwarnings("ignore")
 from core.signal import Signal
 from core.session import SessionState
 from strategy.indicators import completed_candles, position_size
-from data import nse_provider as nse
+from data import upstox_provider as nse
 from config.settings import strategy_cfg
 from config.v5.ath_reversal import ath_reversal_cfg
 from utils.logger import get_logger

@@ -20,7 +20,7 @@ from config.v4.short_intraday import short_intraday_v4_cfg
 from core.signal              import Signal
 from core.prescan             import build_prescan_result, build_short_prescan_result
 from core.session             import SessionState
-from data                     import nse_provider as nse
+from data                     import upstox_provider as nse
 from strategy                 import ema_crossover, orb, pivot_breakout, pullback, vwap_reclaim, vwap_rsi
 from strategy.v1             import short_intraday as short_intraday_v1
 from strategy.v2             import pivot_breakout as pivot_breakout_v2
@@ -171,10 +171,22 @@ def _run_prescan(state: SessionState) -> None:
     prescan = build_prescan_result()
     state.prescan_candidates = set(prescan.candidates)
     telegram.send_message(prescan.summary)
-    if any(_is_short_strategy_mode(mode) for mode in _active_strategy_modes()):
+
+    is_short_active = any(_is_short_strategy_mode(mode) for mode in _active_strategy_modes())
+    short_prescan = None
+    if is_short_active:
         short_prescan = build_short_prescan_result()
         state.short_prescan_candidates = set(short_prescan.candidates)
         telegram.send_message(short_prescan.summary)
+
+    # Critical Alert: If BOTH fail to find anything and flagged as API fail, warn the user
+    if prescan.is_api_fail and (not is_short_active or (short_prescan and short_prescan.is_api_fail)):
+        telegram.send_message(
+            "🚨 *CRITICAL: Pre-scan failed for all strategies.*\n"
+            "The NSE API seems unreachable. The bot will have NO candidates to scan today "
+            "unless the connection is restored."
+        )
+
     state.prescan_sent = True
     log.info(
         f"📡 Pre-scan summary sent. Long candidates: {sorted(state.prescan_candidates)} | "
