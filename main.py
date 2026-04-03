@@ -18,7 +18,7 @@ from config.settings          import WATCHLIST, scanner_cfg, execution_cfg, pres
 from config.v2.short_intraday import short_intraday_v2_cfg
 from config.v4.short_intraday import short_intraday_v4_cfg
 from core.signal              import Signal
-from core.prescan             import build_prescan_result, build_short_prescan_result
+from core.prescan             import build_prescan_result, build_short_prescan_result, build_master_v1_result
 from core.session             import SessionState
 from data                     import upstox_provider as nse
 from strategy                 import ema_crossover, orb, pivot_breakout, pullback, vwap_reclaim, vwap_rsi
@@ -32,6 +32,7 @@ from strategy.v4             import short_intraday as short_intraday_v4
 from strategy.v6             import short_intraday_v6
 from strategy.v3             import vwap_rsi as vwap_rsi_v3
 from strategy.v4             import vwap_rsi_bot as vwap_rsi_v4
+from master_v1               import strategy as master_v1
 from broker                   import kite_broker
 from notifications             import telegram_notifier as telegram
 from utils.time_helpers        import current_hhmm, is_trading_time, is_past_end_time
@@ -118,6 +119,17 @@ def _run_strategy_scan(mode: str, scan_symbols: list[str], state: SessionState) 
                 time.sleep(2)
         return results
 
+    if mode == "master_v1":
+        log.info(f"📌 Master V1 candidates: {len(candidates)} / {len(mode_scan_symbols)}")
+        for symbol in candidates:
+            signal = master_v1.detect(symbol, state)
+            if signal:
+                signal.strategy_names = ["master_v1"]
+                results[symbol] = True
+                telegram.send_signal_alert(signal, state, title="👑 MASTER V1 SIGNAL")
+                time.sleep(2)
+        return results
+
     if mode == "short_intraday_v4":
         log.info(f"📌 short_intraday_v4 candidates: {len(candidates)} / {len(mode_scan_symbols)}")
         found: list[Signal] = []
@@ -168,7 +180,11 @@ def _run_prescan(state: SessionState) -> None:
     if not prescan_cfg.enabled or state.prescan_sent:
         return
 
-    prescan = build_prescan_result()
+    if "master_v1" in _active_strategy_modes():
+        prescan = build_master_v1_result()
+    else:
+        prescan = build_prescan_result()
+        
     state.prescan_candidates = set(prescan.candidates)
     telegram.send_message(prescan.summary)
 
@@ -368,6 +384,17 @@ def _scan_once(state: SessionState) -> None:
                 signal.strategy_names = ["vwap_rsi_v4"]
                 results[symbol] = True
                 telegram.send_signal_alert(signal, state)
+                time.sleep(2)
+    elif effective_mode == "master_v1":
+        candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
+        log.info(f"📌 Master V1 candidates: {len(candidates)} / {len(scan_symbols)}")
+
+        for symbol in candidates:
+            signal = master_v1.detect(symbol, state)
+            if signal:
+                signal.strategy_names = ["master_v1"]
+                results[symbol] = True
+                telegram.send_signal_alert(signal, state, title="👑 MASTER V1 SIGNAL")
                 time.sleep(2)
     elif effective_mode == "pivot_breakout":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]

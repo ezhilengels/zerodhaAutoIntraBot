@@ -38,6 +38,7 @@ from strategy.v6 import short_intraday_v6
 from strategy.v3 import vwap_rsi as vwap_rsi_v3
 from strategy.v4 import vwap_rsi_bot as vwap_rsi_v4
 from strategy.v5 import ath_reversal_bot as ath_reversal_v5
+from master_v1 import strategy as master_v1
 
 
 StrategyModule = object
@@ -82,6 +83,7 @@ STRATEGY_MODULES: Dict[str, StrategyModule] = {
     "short_intraday_v4": short_intraday_v4,
     "short_intraday_v6": short_intraday_v6,
     "ath_reversal_v5": ath_reversal_v5,
+    "master_v1": master_v1,
 }
 
 
@@ -91,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         default="multi",
-        choices=["pullback", "orb", "vwap_reclaim", "vwap_reclaim_v2", "vwap_rsi", "vwap_rsi_v2", "vwap_rsi_v3", "vwap_rsi_v4", "pivot_breakout", "pivot_breakout_v2", "ema_crossover", "short_intraday_v1", "short_intraday_v2", "short_intraday_v3", "short_intraday_v4", "short_intraday_v6", "ath_reversal_v5", "multi"],
+        choices=["pullback", "orb", "vwap_reclaim", "vwap_reclaim_v2", "vwap_rsi", "vwap_rsi_v2", "vwap_rsi_v3", "vwap_rsi_v4", "pivot_breakout", "pivot_breakout_v2", "ema_crossover", "short_intraday_v1", "short_intraday_v2", "short_intraday_v3", "short_intraday_v4", "short_intraday_v6", "ath_reversal_v5", "master_v1", "multi"],
         help="Strategy mode to replay.",
     )
     parser.add_argument(
@@ -224,15 +226,27 @@ def detect_signal(strategy_name: str, symbol: str, state: SessionState, quote: d
     return signal
 
 
-def exit_trade(signal: Signal, future_df: pd.DataFrame) -> Tuple[str, pd.Timestamp, float]:
+def exit_trade(signal: Signal, future_df: pd.DataFrame, strategy_name: str = "") -> Tuple[str, pd.Timestamp, float]:
     direction   = getattr(signal, "direction", "LONG")
     sl          = signal.stop_loss
     be_trigger  = getattr(signal, "be_stop_trigger", 0.0)
     be_active   = False
 
-    for _, row in future_df.iterrows():
+    module = STRATEGY_MODULES.get(strategy_name)
+    can_exit_early = hasattr(module, "should_exit_early")
+
+    for i, (_, row) in enumerate(future_df.iterrows()):
         low  = float(row["low"])
         high = float(row["high"])
+        close = float(row["close"])
+
+        # Early Exit Logic (EMA Flip / VWAP Break)
+        if can_exit_early:
+            # We mock the market view for the exit check
+            partial_until_now = future_df.iloc[: i + 1]
+            # (Simple version: we just check if the rule triggers)
+            if module.should_exit_early(signal.symbol, signal):
+                return "EARLY_EXIT", pd.Timestamp(row["time"]), close
 
         if direction == "SHORT":
             # SHORT: SL is ABOVE entry, TP is BELOW entry
@@ -309,7 +323,7 @@ def replay_symbol_day(symbol: str, day_df: pd.DataFrame, strategy_name: str, sym
         if future_df.empty:
             continue
 
-        outcome, exit_time, exit_price = exit_trade(signal, future_df)
+        outcome, exit_time, exit_price = exit_trade(signal, future_df, strategy_name=strategy_name)
         entry_time = pd.Timestamp(partial_df.iloc[-1]["time"])
         direction  = getattr(signal, "direction", "LONG")
         # PnL is positive when trade moves in intended direction
@@ -355,6 +369,7 @@ def summarise(trades: Iterable[ReplayTrade]) -> None:
 
     wins = sum(1 for trade in trades if trade.outcome == "TARGET")
     losses = sum(1 for trade in trades if trade.outcome == "SL")
+    early = sum(1 for trade in trades if trade.outcome == "EARLY_EXIT")
     eod = sum(1 for trade in trades if trade.outcome == "EOD")
     total_pnl = round(sum(trade.pnl_per_share for trade in trades), 2)
     gross_total = round(sum(trade.gross_pnl_rupees for trade in trades), 2)
@@ -385,6 +400,7 @@ def summarise(trades: Iterable[ReplayTrade]) -> None:
     print(f"trades      : {len(trades)}")
     print(f"wins        : {wins}")
     print(f"losses      : {losses}")
+    print(f"early exits : {early}")
     print(f"eod exits   : {eod}")
     print(f"win rate    : {round((wins / len(trades)) * 100, 1)}%")
     print(f"total pnl   : ₹{total_pnl} per share")

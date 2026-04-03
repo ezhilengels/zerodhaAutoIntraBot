@@ -18,6 +18,7 @@ from prescanV2.premarket_filter import (
     FilteredStock,
     run_premarket_filter,
 )
+from master_v1.prescan import run_daily_prescan as run_master_v1_prescan
 
 
 @dataclass
@@ -133,3 +134,13 @@ def build_short_prescan_result() -> PreScanResult:
     )
 
     return PreScanResult(summary=summary, candidates=candidates, is_api_fail=is_api_fail)
+
+def build_master_v1_result() -> PreScanResult:
+    """Connector for the Master V1 Island."""
+    candidates = run_master_v1_prescan(list(WATCHLIST))
+    summary = (
+        "👑 *MASTER V1 PRE-SCAN*\n"
+        f"Filters: Gap > 0.5%, Turnover > 5Cr, Beating Nifty\n"
+        f"Today's Elite Shortlist: {', '.join(candidates) if candidates else 'None'}"
+    )
+    return PreScanResult(summary=summary, candidates=candidates)

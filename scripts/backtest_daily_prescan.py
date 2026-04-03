@@ -84,6 +84,7 @@ def parse_args() -> argparse.Namespace:
             "short_intraday_v4",
             "short_intraday_v6",
             "ath_reversal_v5",
+            "master_v1",
             "multi",
         ],
         help="Strategy to replay on the daily shortlist.",
