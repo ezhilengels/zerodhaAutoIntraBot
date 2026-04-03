@@ -18,7 +18,7 @@ from config.settings          import WATCHLIST, scanner_cfg, execution_cfg, pres
 from config.v2.short_intraday import short_intraday_v2_cfg
 from config.v4.short_intraday import short_intraday_v4_cfg
 from core.signal              import Signal
-from core.prescan             import build_prescan_result
+from core.prescan             import build_prescan_result, build_short_prescan_result
 from core.session             import SessionState
 from data                     import nse_provider as nse
 from strategy                 import ema_crossover, orb, pivot_breakout, pullback, vwap_reclaim, vwap_rsi
@@ -83,12 +83,32 @@ def _active_strategy_modes() -> list[str]:
     return STRATEGY_MODES if STRATEGY_MODES else [STRATEGY_MODE]
 
 
+def _is_short_strategy_mode(mode: str) -> bool:
+    return mode in {
+        "short_intraday_v1",
+        "short_intraday_v2",
+        "short_intraday_v3",
+        "short_intraday_v4",
+        "short_intraday_v6",
+        "ath_reversal_v5",
+    }
+
+
+def _scan_symbols_for_mode(state: SessionState, mode: str) -> list[str]:
+    if prescan_cfg.enabled and prescan_cfg.shortlist_only:
+        if _is_short_strategy_mode(mode):
+            return [symbol for symbol in WATCHLIST if symbol in state.short_prescan_candidates]
+        return [symbol for symbol in WATCHLIST if symbol in state.prescan_candidates]
+    return list(WATCHLIST)
+
+
 def _run_strategy_scan(mode: str, scan_symbols: list[str], state: SessionState) -> Dict[str, bool]:
     results = {symbol: False for symbol in scan_symbols}
-    candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]
+    mode_scan_symbols = _scan_symbols_for_mode(state, mode)
+    candidates = [symbol for symbol in mode_scan_symbols if not state.already_traded(symbol)]
 
     if mode == "vwap_rsi_v4":
-        log.info(f"📌 VWAP+RSI v4 candidates: {len(candidates)} / {len(scan_symbols)}")
+        log.info(f"📌 VWAP+RSI v4 candidates: {len(candidates)} / {len(mode_scan_symbols)}")
         for symbol in candidates:
             signal = vwap_rsi_v4.detect(symbol, state)
             if signal:
@@ -99,7 +119,7 @@ def _run_strategy_scan(mode: str, scan_symbols: list[str], state: SessionState) 
         return results
 
     if mode == "short_intraday_v4":
-        log.info(f"📌 short_intraday_v4 candidates: {len(candidates)} / {len(scan_symbols)}")
+        log.info(f"📌 short_intraday_v4 candidates: {len(candidates)} / {len(mode_scan_symbols)}")
         found: list[Signal] = []
         for symbol in candidates:
             signal = short_intraday_v4.detect(symbol, state)
@@ -151,8 +171,15 @@ def _run_prescan(state: SessionState) -> None:
     prescan = build_prescan_result()
     state.prescan_candidates = set(prescan.candidates)
     telegram.send_message(prescan.summary)
+    if any(_is_short_strategy_mode(mode) for mode in _active_strategy_modes()):
+        short_prescan = build_short_prescan_result()
+        state.short_prescan_candidates = set(short_prescan.candidates)
+        telegram.send_message(short_prescan.summary)
     state.prescan_sent = True
-    log.info(f"📡 Pre-scan summary sent. Candidates: {sorted(state.prescan_candidates)}")
+    log.info(
+        f"📡 Pre-scan summary sent. Long candidates: {sorted(state.prescan_candidates)} | "
+        f"Short candidates: {sorted(state.short_prescan_candidates)}"
+    )
 
 
 def _scan_symbols(state: SessionState) -> list[str]:
@@ -183,6 +210,8 @@ def _scan_once(state: SessionState) -> None:
         return
 
     effective_mode = active_modes[0]
+    scan_symbols = _scan_symbols_for_mode(state, effective_mode)
+    results = {symbol: False for symbol in scan_symbols}
 
     if effective_mode == "dual_v4":
         candidates = [symbol for symbol in scan_symbols if not state.already_traded(symbol)]

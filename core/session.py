@@ -22,6 +22,7 @@ class SessionState:
     traded_symbols: set       = field(default_factory=set)
     prescan_sent:   bool      = False
     prescan_candidates: set   = field(default_factory=set)
+    short_prescan_candidates: set = field(default_factory=set)
     traded_levels: dict       = field(default_factory=dict)
 
     # ── Pre-market cache ──────────────────────────────────────────────────
@@ -86,6 +87,7 @@ class SessionState:
         self.traded_symbols  = set()
         self.prescan_sent    = False
         self.prescan_candidates = set()
+        self.short_prescan_candidates = set()
         self.traded_levels   = {}
         self.prev_close_map  = {}
         self.pending_signals = {}

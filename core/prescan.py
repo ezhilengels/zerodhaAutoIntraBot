@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from config.settings import WATCHLIST, STRATEGY_MODE, prescan_cfg
 from data import nse_provider as nse
+from core.prescan_short_sell_filters import PrescanConfig as ShortPrescanConfig, apply_prescan_filters
 from prescanV2.premarket_filter import (
     PremarketFilterConfig,
     FilteredStock,
@@ -80,3 +81,50 @@ def build_prescan_result() -> PreScanResult:
 
 def build_prescan_summary() -> str:
     return build_prescan_result().summary
+
+
+def build_short_prescan_result() -> PreScanResult:
+    cfg = ShortPrescanConfig(shortlist_size=prescan_cfg.shortlist_size)
+
+    gap_data: dict[str, dict] = {}
+    raw_symbols: list[str] = []
+
+    for symbol in WATCHLIST:
+        quote = nse.get_quote(symbol)
+        if not quote:
+            continue
+
+        prev_close = float(quote.get("prev_close") or 0.0)
+        open_price = float(quote.get("open") or 0.0)
+        if prev_close <= 0 or open_price <= 0:
+            continue
+
+        daily_df = nse.get_daily_candles(symbol, days=3)
+        prev_volume = int(float(daily_df.iloc[-2]["volume"])) if len(daily_df) >= 2 else 0
+        gap_pct = ((open_price - prev_close) / prev_close) * 100
+
+        symbol_key = symbol.upper()
+        gap_data[symbol_key] = {
+            "gap_pct": round(gap_pct, 4),
+            "prev_volume": prev_volume,
+            "prev_close": prev_close,
+        }
+        raw_symbols.append(symbol_key)
+
+    shortlist = apply_prescan_filters(raw_symbols, gap_data, cfg)
+    candidates = shortlist[: prescan_cfg.shortlist_size]
+
+    lines = []
+    for symbol in candidates:
+        meta = gap_data.get(symbol, {})
+        lines.append(
+            f"{symbol} ({float(meta.get('gap_pct', 0.0)):+.2f}%, vol {int(meta.get('prev_volume', 0)):,})"
+        )
+
+    summary = (
+        "📡 *Short Pre-Scan*\n"
+        f"Gap 1.5% to 5.0%, prev vol >= 500000, price >= 200\n"
+        f"Today's short candidates: {', '.join(lines) if lines else 'None'}"
+    )
+
+    return PreScanResult(summary=summary, candidates=candidates)
