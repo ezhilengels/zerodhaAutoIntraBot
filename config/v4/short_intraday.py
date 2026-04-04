@@ -33,6 +33,11 @@ class ShortIntradayV4Config:
     target_rr_mult: float = float(os.getenv("SHORT_INTRADAY_V4_TARGET_RR_MULT", "1.5"))
     min_target_buffer_pct: float = float(os.getenv("SHORT_INTRADAY_V4_MIN_TARGET_BUFFER_PCT", "0.002"))
 
+    # Sniper Settings
+    gap_min_pct: float = float(os.getenv("SHORT_V4_GAP_MIN", "3.0"))
+    require_bearish_wick: bool = os.getenv("SHORT_V4_REQUIRE_BEARISH_WICK", "false").strip().lower() == "true"
+    require_lower_high: bool = os.getenv("SHORT_V4_REQUIRE_LOWER_HIGH", "false").strip().lower() == "true"
+
     blocklist: set = None
 
     def __post_init__(self) -> None:

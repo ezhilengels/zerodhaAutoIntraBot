@@ -20,6 +20,7 @@ Standalone test:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -37,54 +38,32 @@ class PrescanConfig:
     gap_max_pct:     float = 5.0      # skip >5% gaps (news-driven, unpredictable)
 
     # Liquidity
-    min_prev_volume: int   = 500_000  # at least 5L shares traded previous day
-    min_price:       float = 200.0    # skip sub-₹200 stocks (wide spreads)
+    min_prev_volume: int   = 200_000  # at least 2L shares traded previous day (Tactical Mode)
+    min_price:       float = 100.0    # allow stocks from ₹100
 
-    # Shortlist cap — quality over quantity
-    shortlist_size:  int   = 8        # max symbols passed to strategy scanner
+    # Shortlist cap — increased for higher volume
+    shortlist_size:  int   = 15       # allow more candidates
+
+    # Liquidity Guard (Nifty 500 protection)
+    liquidity_guard_enabled: bool = os.getenv("LIQUIDITY_GUARD_ENABLED", "true").lower() == "true"
+    min_turnover_cr: float = float(os.getenv("LIQUIDITY_MIN_TURNOVER_CR", "2.0"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Sector / symbol blocklist
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Symbols in these groups have structural reasons NOT to exhaust intraday:
-#   - Infra/capex: trend with government spend cycles, gap-ups are sustained
-#   - PSU banks: move on RBI policy news, not technical exhaustion
-#   - Pharma: gap-ups are usually USFDA/results driven, not momentum-exhaustion
-
+# Heavily reduced to allow for higher trade volume.
+# Only defensive / extremely low-volatility stocks remain blocked.
 SECTOR_BLOCKLIST: set[str] = {
-    # ── Infra / Capital Goods ──────────────────────────────────────────────
-    "ULTRACEMCO",   # cement infra — sustained uptrends, no intraday reversal
-    "LT",           # L&T — same issue, capex driven
-    "NTPC",         # PSU power — policy driven
-    "POWERGRID",    # PSU grid — dividend/policy stock, not momentum
-    "ONGC",         # crude-linked PSU — follows commodity, not technicals
-    "COALINDIA",    # PSU commodity — low intraday volatility for shorts
-    "BHEL",         # capex cycle stock — similar to LT
-    "SIEMENS",      # industrial capital goods — sustained trends
-    "ABB",          # same as SIEMENS
-    "ADANIPORTS",   # infra conglomerate — news sensitive, not exhaustion
-
-    # ── PSU Banks ─────────────────────────────────────────────────────────
-    "SBIN",         # already in strategy blocklist — RBI driven
-    "BANKBARODA",   # PSU bank — policy gap-ups sustained
-    "PNB",          # low float PSU bank — erratic
-    "CANBK",        # same
-    "UNIONBANK",    # same
-
-    # ── Pharma ────────────────────────────────────────────────────────────
-    "SUNPHARMA",    # USFDA news gaps — not exhaustion
-    "DRREDDY",      # same
-    "CIPLA",        # same
-    "DIVISLAB",     # same
-    "AUROPHARMA",   # same
-
-    # ── Other structural false positives ──────────────────────────────────
-    "EICHERMOT",    # low float, erratic volume climax signals
+    "COFORGE",      # Blocked: Outlier loss
+    "EXIDEIND",     # Blocked: Outlier loss
+    "OBEROIRLTY",   # Blocked: Outlier loss
+    "INDUSTOWER",   # Blocked: Outlier loss
+    "ABB",          # Blocked due to extreme volatility / outlier losses
     "HINDUNILVR",   # FMCG defensive — barely moves intraday
     "NESTLEIND",    # same
-    "BRITANNIA",    # FMCG, but keep if showing in winners — review periodically
+    "BRITANNIA",    # same
 }
 
 
@@ -186,6 +165,14 @@ def apply_prescan_filters(
         if not _passes_price_filter(sym, prev_close, cfg):
             reasons[sym] = f"price=₹{prev_close:.2f}"
             continue
+
+        # --- Quality Enhancement: Liquidity Guard ---
+        if cfg.liquidity_guard_enabled:
+            # turnover = price * volume (approximate using prev_close)
+            turnover_cr = (prev_close * prev_vol) / 10_000_000.0
+            if turnover_cr < cfg.min_turnover_cr:
+                reasons[sym] = f"low_turnover={turnover_cr:.1f}Cr"
+                continue
 
         passed.append((sym, gap_pct))
         log.debug(f"  ✓ {sym}: gap={gap_pct:.2f}% vol={prev_vol:,} price=₹{prev_close:.2f}")
